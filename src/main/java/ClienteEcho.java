@@ -32,8 +32,6 @@ public class ClienteEcho {
             System.out.println("Gerais:");
             System.out.println("  login          : Entrar no sistema");
             System.out.println("  criarusuario   : Registrar uma nova conta");
-            System.out.println("  sair           : Fechar o programa");
-
             System.out.println("\nUsuario Logado:");
             //System.out.println("  listarfilmes   : Ver todos os filmes cadastrados");
             //System.out.println("  buscarfilme    : Ver detalhes e reviews de um filme (pelo ID)");
@@ -43,16 +41,10 @@ public class ClienteEcho {
             //System.out.println("  excluirreview  : Apagar uma de suas reviews (pelo ID da review)");
             System.out.println("  verperfil      : Ver o nome do seu usuario");
             System.out.println("  excluiruser    : Apagar sua propria conta");
-            System.out.println("  editaruser    : Apagar sua propria conta");
+            System.out.println("  editaruser    : Editar sua propria conta"); // Corrigi a descrição
             System.out.println("  logout         : Sair da conta atual");
-
             //System.out.println("\nAdministrador:");
-            //System.out.println("  criarfilme     : Adicionar um novo filme");
-            //System.out.println("  editarfilme    : Modificar dados de um filme (pelo ID do filme)");
-            //System.out.println("  excluirfilme   : Apagar um filme (pelo ID do filme)");
-            //System.out.println("  listarusuarios : Ver todos os usuarios do sistema");
-            //System.out.println("  admineditaruser: Mudar a senha de um usuario (pelo ID do usuario)");
-            //System.out.println("  adminexcluiruser: Apagar um usuario (pelo ID do usuario)");
+            //... (comandos admin)
             System.out.println("\n--------------------------\n");
 
             String tokenLogado = null;
@@ -80,6 +72,11 @@ public class ClienteEcho {
                     out.println(jsonRequisicao);
                     respostaJson = in.readLine();
 
+                    if (respostaJson == null) {
+                        System.out.println("  >>> ERRO: Servidor desconectou inesperadamente.");
+                        break;
+                    }
+
                     JsonObject resposta = gson.fromJson(respostaJson, JsonObject.class);
                     String status = resposta.get("status").getAsString();
                     String msg = "";
@@ -90,18 +87,11 @@ public class ClienteEcho {
                         msg = "Servidor não enviou mensagem.";
                     }
 
+                    // *** SAÍDA PADRONIZADA ***
+                    System.out.println("  >>> (Status " + status + ") " + msg);
+
                     if (status.equals("200")) {
                         tokenLogado = resposta.get("token").getAsString();
-                        System.out.println("  >>> " + msg); // "Sucesso: operação realizada com sucesso"
-                    } else if (status.equals("422")) {
-                        System.out.println("  >>> " + msg); // "Erro: Chaves faltantes ou invalidas"
-                    } else if (status.equals("500")) {
-                        System.out.println("  >>> " + msg); // "Erro: Falha interna do servidor"
-                    } else if (status.equals("403")) {
-                        System.out.println("  >>> " + msg); // "Erro: sem permissão"
-                    } else {
-                        // Pega qualquer outro erro, como o 400 "Credenciais inválidas"
-                        System.out.println("  >>> Falha no login. (Status: " + status + "): " + msg);
                     }
 
                 } else if (comando.equalsIgnoreCase("criarusuario")) {
@@ -114,6 +104,11 @@ public class ClienteEcho {
                     out.println(jsonRequisicao);
                     respostaJson = in.readLine();
 
+                    if (respostaJson == null) {
+                        System.out.println("  >>> ERRO: Servidor desconectou inesperadamente.");
+                        break;
+                    }
+
                     JsonObject resposta = gson.fromJson(respostaJson, JsonObject.class);
                     String status = resposta.get("status").getAsString();
                     String msg = "";
@@ -124,24 +119,8 @@ public class ClienteEcho {
                         msg = "Servidor não enviou mensagem.";
                     }
 
-                    if (status.equals("201")) {
-                        System.out.println("  >>> " + msg); // "Sucesso: Recurso cadastrado"
-                    } else if (status.equals("409")) {
-                        System.out.println("  >>> " + msg); // "Erro: Recurso ja existe"
-                    } else if (status.equals("422")) {
-                        System.out.println("  >>> " + msg); // "Erro: Chaves faltantes ou invalidas"
-                    } else if (status.equals("405")) {
-                        System.out.println("  >>> " + msg); // "Erro: Campos inválidos..."
-                    } else if (status.equals("500")) {
-                        System.out.println("  >>> " + msg); // "Erro: Falha interna do servidor"
-                    } else if (status.equals("401")) {
-                        System.out.println("  >>> " + msg); // "Erro: Token inválido" (improvável aqui)
-                    } else if (status.equals("400")) {
-                        System.out.println("  >>> " + msg); // "Erro: Operação não encontrada..." (improvável aqui)
-                    } else {
-                        // Pega qualquer outro status não listado
-                        System.out.println("  >>> Falha ao criar usuario (Status: " + status + "): " + msg);
-                    }
+                    // *** SAÍDA PADRONIZADA ***
+                    System.out.println("  >>> (Status " + status + ") " + msg);
 
                 } else if (comando.equalsIgnoreCase("verperfil")) {
                     if (tokenLogado == null) {
@@ -157,6 +136,11 @@ public class ClienteEcho {
                     out.println(jsonRequisicao);
                     respostaJson = in.readLine();
 
+                    if (respostaJson == null) {
+                        System.out.println("  >>> ERRO: Servidor desconectou inesperadamente.");
+                        break;
+                    }
+
                     JsonObject resposta = gson.fromJson(respostaJson, JsonObject.class);
                     String status = resposta.get("status").getAsString();
                     String msg = "";
@@ -167,24 +151,16 @@ public class ClienteEcho {
                         msg = "Servidor não enviou mensagem.";
                     }
 
+                    // *** SAÍDA PADRONIZADA ***
                     if (status.equals("200")) {
                         String nomeUsuario = resposta.get("usuario").getAsString();
-                        System.out.println("  >>> " + msg + " (Usuario: " + nomeUsuario + ")");
-                    } else if (status.equals("401")) {
-                        System.out.println("  >>> " + msg); // "Erro: Token inválido"
-                        tokenLogado = null; // Limpa o token inválido do cliente
-                    } else if (status.equals("404")) {
-                        System.out.println("  >>> " + msg); // "Erro: Recurso inexistente"
-                    } else if (status.equals("403")) {
-                        System.out.println("  >>> " + msg); // "Erro: sem permissão"
-                    } else if (status.equals("422")) {
-                        System.out.println("  >>> " + msg); // "Erro: Chaves faltantes ou invalidas"
-                    } else if (status.equals("500")) {
-                        System.out.println("  >>> " + msg); // "Erro: Falha interna do servidor"
-                    } else if (status.equals("400")) {
-                        System.out.println("  >>> " + msg); // "Erro: Operação não encontrada..."
+                        System.out.println("  >>> (Status " + status + ") " + msg + " (Usuario: " + nomeUsuario + ")");
                     } else {
-                        System.out.println("  >>> Falha ao buscar perfil (Status: " + status + "): " + msg);
+                        System.out.println("  >>> (Status " + status + ") " + msg);
+                    }
+
+                    if (status.equals("401")) {
+                        tokenLogado = null; // Limpa o token inválido
                     }
 
                 } else if (comando.equalsIgnoreCase("editaruser")) {
@@ -204,6 +180,11 @@ public class ClienteEcho {
                     out.println(jsonRequisicao);
                     respostaJson = in.readLine();
 
+                    if (respostaJson == null) {
+                        System.out.println("  >>> ERRO: Servidor desconectou inesperadamente.");
+                        break;
+                    }
+
                     JsonObject resposta = gson.fromJson(respostaJson, JsonObject.class);
                     String status = resposta.get("status").getAsString();
                     String msg = "";
@@ -214,26 +195,53 @@ public class ClienteEcho {
                         msg = "Servidor não enviou mensagem.";
                     }
 
-                    if (status.equals("200")) {
-                        System.out.println("  >>> " + msg); // "Sucesso: operação realizada com sucesso"
-                    } else if (status.equals("401")) {
-                        System.out.println("  >>> " + msg); // "Erro: Token inválido"
+                    // *** SAÍDA PADRONIZADA ***
+                    System.out.println("  >>> (Status " + status + ") " + msg);
+
+                    if (status.equals("401")) {
                         tokenLogado = null; // Limpa o token inválido
-                    } else if (status.equals("405")) {
-                        System.out.println("  >>> " + msg); // "Erro: Campos inválidos..." (senha muito curta)
-                    } else if (status.equals("404")) {
-                        System.out.println("  >>> " + msg); // "Erro: Recurso inexistente" (usuário não encontrado)
-                    } else if (status.equals("422")) {
-                        System.out.println("  >>> " + msg); // "Erro: Chaves faltantes ou invalidas"
-                    } else if (status.equals("403")) {
-                        System.out.println("  >>> " + msg); // "Erro: sem permissão"
-                    } else if (status.equals("500")) {
-                        System.out.println("  >>> " + msg); // "Erro: Falha interna do servidor"
-                    } else if (status.equals("400")) {
-                        System.out.println("  >>> " + msg); // "Erro: Operação não encontrada..."
-                    } else {
-                        System.out.println("  >>> Falha ao editar sua senha (Status " + status + "): " + msg);
                     }
+
+                } else if (comando.equalsIgnoreCase("listarusuarios")) {
+                    // ... (seu código de listarusuarios) ...
+                    // (Você não me pediu para modificar este, então o mantive igual)
+                    if (tokenLogado == null) {
+                        System.out.println("  >>> ERRO: Voce precisa estar logado.");
+                        continue;
+                    }
+
+                    jsonRequisicao = String.format(
+                            "{\"operacao\": \"LISTAR_USUARIOS\", \"token\": \"%s\"}",
+                            tokenLogado
+                    );
+
+                    out.println(jsonRequisicao);
+                    respostaJson = in.readLine();
+
+                    if (respostaJson == null) {
+                        System.out.println("  >>> ERRO: Servidor desconectou inesperadamente.");
+                        break;
+                    }
+
+                    JsonObject resposta = gson.fromJson(respostaJson, JsonObject.class);
+                    String status = resposta.get("status").getAsString();
+
+                    if (status.equals("200")) {
+                        System.out.println("  >>> Lista de Usuarios do Sistema:");
+                        JsonArray usuariosArray = resposta.get("usuarios").getAsJsonArray();
+
+                        for (JsonElement userEl : usuariosArray) {
+                            JsonObject user = userEl.getAsJsonObject();
+                            int id = user.get("id").getAsInt();
+                            String nome = user.get("nome").getAsString();
+                            System.out.println(String.format("    [%d] %s", id, nome));
+                        }
+                    } else if (status.equals("401")) {
+                        System.out.println("  >>> Falha ao listar usuarios: Acesso negado. Apenas administradores.");
+                    } else {
+                        System.out.println("  >>> Falha ao listar usuarios (Status: " + status + ").");
+                    }
+
 
                 } else if (comando.equalsIgnoreCase("excluiruser")) {
                     if (tokenLogado == null) {
@@ -257,6 +265,11 @@ public class ClienteEcho {
                     out.println(jsonRequisicao);
                     respostaJson = in.readLine();
 
+                    if (respostaJson == null) {
+                        System.out.println("  >>> ERRO: Servidor desconectou inesperadamente.");
+                        break;
+                    }
+
                     JsonObject resposta = gson.fromJson(respostaJson, JsonObject.class);
                     String status = resposta.get("status").getAsString();
                     String msg = "";
@@ -267,26 +280,15 @@ public class ClienteEcho {
                         msg = "Servidor não enviou mensagem.";
                     }
 
+                    // *** SAÍDA PADRONIZADA ***
+                    System.out.println("  >>> (Status " + status + ") " + msg);
+
                     if (status.equals("200")) {
-                        System.out.println("  >>> " + msg); // "Sucesso: operação realizada com sucesso"
                         System.out.println("  >>> Voce foi desconectado.");
                         tokenLogado = null;
-                        break; // Sai do loop while(true) pois o usuário foi excluído
+                        break; // Sai do loop
                     } else if (status.equals("401")) {
-                        System.out.println("  >>> " + msg); // "Erro: Token inválido"
                         tokenLogado = null; // Limpa o token inválido
-                    } else if (status.equals("404")) {
-                        System.out.println("  >>> " + msg); // "Erro: Recurso inexistente"
-                    } else if (status.equals("422")) {
-                        System.out.println("  >>> " + msg); // "Erro: Chaves faltantes ou invalidas"
-                    } else if (status.equals("403")) {
-                        System.out.println("  >>> " + msg); // "Erro: sem permissão"
-                    } else if (status.equals("500")) {
-                        System.out.println("  >>> " + msg); // "Erro: Falha interna do servidor"
-                    } else if (status.equals("400")) {
-                        System.out.println("  >>> " + msg); // "Erro: Operação não encontrada..."
-                    } else {
-                        System.out.println("  >>> Falha ao excluir sua conta (Status " + status + "): " + msg);
                     }
 
                 } else if (comando.equalsIgnoreCase("logout")) {
@@ -299,6 +301,11 @@ public class ClienteEcho {
                     out.println(jsonRequisicao);
                     respostaJson = in.readLine();
 
+                    if (respostaJson == null) {
+                        System.out.println("  >>> ERRO: Servidor desconectou inesperadamente.");
+                        break;
+                    }
+
                     JsonObject resposta = gson.fromJson(respostaJson, JsonObject.class);
                     String status = resposta.get("status").getAsString();
                     String msg = "";
@@ -309,26 +316,59 @@ public class ClienteEcho {
                         msg = "Servidor não enviou mensagem.";
                     }
 
+                    // *** SAÍDA PADRONIZADA ***
+                    System.out.println("  >>> (Status " + status + ") " + msg);
+
+                    tokenLogado = null; // Limpa o token em caso de sucesso (200) ou falha (401)
+
                     if (status.equals("200")) {
-                        tokenLogado = null;
-                        System.out.println("  >>> " + msg); // "Sucesso: operação realizada com sucesso"
                         System.out.println("  >>> Desconectando...");
                         break;
-                    } else if (status.equals("401")) {
-                        System.out.println("  >>> " + msg); // "Erro: Token inválido"
-                        // Se o token é inválido, limpamos ele do cliente
-                        tokenLogado = null;
-                    } else if (status.equals("404")) {
-                        System.out.println("  >>> " + msg); // "Erro: Recurso inexistente"
-                    } else if (status.equals("422")) {
-                        System.out.println("  >>> " + msg); // "Erro: Chaves faltantes ou invalidas"
-                    } else if (status.equals("500")) {
-                        System.out.println("  >>> " + msg); // "Erro: Falha interna do servidor"
+                    }
+
+                } else {
+                    // Bloco para COMANDOS DESCONHECIDOS (gfgfddf) e 'sair'
+
+                    if (comando.equalsIgnoreCase("sair")) {
+                        System.out.println("Saindo...");
+                        break; // Quebra o loop e encerra o cliente
+                    }
+
+                    System.out.println(">>> Enviando comando desconhecido '" + comando + "' para o servidor...");
+
+                    if (tokenLogado != null) {
+                        jsonRequisicao = String.format(
+                                "{\"operacao\": \"%s\", \"token\": \"%s\"}",
+                                comando, tokenLogado
+                        );
                     } else {
-                        System.out.println("  >>> Falha ao fazer logout (Status " + status + "): " + msg);
+                        jsonRequisicao = "{\"operacao\": \"" + comando + "\"}";
+                    }
+
+                    out.println(jsonRequisicao);
+                    respostaJson = in.readLine();
+
+                    if (respostaJson == null) {
+                        System.out.println("  >>> ERRO: Servidor desconectou inesperadamente.");
+                        continue;
+                    }
+
+                    try {
+                        JsonObject resposta = gson.fromJson(respostaJson, JsonObject.class);
+                        String status = resposta.get("status").getAsString();
+                        String msg = "Mensagem desconhecida";
+                        if (resposta.has("mensagem")) {
+                            msg = resposta.get("mensagem").getAsString();
+                        }
+
+                        // *** SAÍDA PADRONIZADA ***
+                        System.out.println("  >>> (Status " + status + ") " + msg);
+
+                    } catch (Exception e) {
+                        System.out.println("  >>> Servidor enviou resposta mal formatada: " + respostaJson);
                     }
                 }
-            }
+            } // Fim do while
 
         } catch (UnknownHostException e) {
             System.err.println("Host desconhecido: " + e.getMessage());
