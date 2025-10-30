@@ -86,8 +86,7 @@ public class ClienteEcho {
                     } else {
                         msg = "Servidor não enviou mensagem.";
                     }
-
-                    // *** SAÍDA PADRONIZADA ***
+                    
                     System.out.println("  >>> (Status " + status + ") " + msg);
 
                     if (status.equals("200")) {
@@ -119,7 +118,6 @@ public class ClienteEcho {
                         msg = "Servidor não enviou mensagem.";
                     }
 
-                    // *** SAÍDA PADRONIZADA ***
                     System.out.println("  >>> (Status " + status + ") " + msg);
 
                 } else if (comando.equalsIgnoreCase("verperfil")) {
@@ -151,7 +149,6 @@ public class ClienteEcho {
                         msg = "Servidor não enviou mensagem.";
                     }
 
-                    // *** SAÍDA PADRONIZADA ***
                     if (status.equals("200")) {
                         String nomeUsuario = resposta.get("usuario").getAsString();
                         System.out.println("  >>> (Status " + status + ") " + msg + " (Usuario: " + nomeUsuario + ")");
@@ -160,7 +157,7 @@ public class ClienteEcho {
                     }
 
                     if (status.equals("401")) {
-                        tokenLogado = null; // Limpa o token inválido
+                        tokenLogado = null;
                     }
 
                 } else if (comando.equalsIgnoreCase("editaruser")) {
@@ -195,16 +192,13 @@ public class ClienteEcho {
                         msg = "Servidor não enviou mensagem.";
                     }
 
-                    // *** SAÍDA PADRONIZADA ***
                     System.out.println("  >>> (Status " + status + ") " + msg);
 
                     if (status.equals("401")) {
-                        tokenLogado = null; // Limpa o token inválido
+                        tokenLogado = null;
                     }
 
                 } else if (comando.equalsIgnoreCase("listarusuarios")) {
-                    // ... (seu código de listarusuarios) ...
-                    // (Você não me pediu para modificar este, então o mantive igual)
                     if (tokenLogado == null) {
                         System.out.println("  >>> ERRO: Voce precisa estar logado.");
                         continue;
@@ -280,15 +274,14 @@ public class ClienteEcho {
                         msg = "Servidor não enviou mensagem.";
                     }
 
-                    // *** SAÍDA PADRONIZADA ***
                     System.out.println("  >>> (Status " + status + ") " + msg);
 
                     if (status.equals("200")) {
                         System.out.println("  >>> Voce foi desconectado.");
                         tokenLogado = null;
-                        break; // Sai do loop
+                        break;
                     } else if (status.equals("401")) {
-                        tokenLogado = null; // Limpa o token inválido
+                        tokenLogado = null;
                     }
 
                 } else if (comando.equalsIgnoreCase("logout")) {
@@ -316,10 +309,9 @@ public class ClienteEcho {
                         msg = "Servidor não enviou mensagem.";
                     }
 
-                    // *** SAÍDA PADRONIZADA ***
                     System.out.println("  >>> (Status " + status + ") " + msg);
 
-                    tokenLogado = null; // Limpa o token em caso de sucesso (200) ou falha (401)
+                    tokenLogado = null;
 
                     if (status.equals("200")) {
                         System.out.println("  >>> Desconectando...");
@@ -327,11 +319,10 @@ public class ClienteEcho {
                     }
 
                 } else {
-                    // Bloco para COMANDOS DESCONHECIDOS (gfgfddf) e 'sair'
 
                     if (comando.equalsIgnoreCase("sair")) {
                         System.out.println("Saindo...");
-                        break; // Quebra o loop e encerra o cliente
+                        break;
                     }
 
                     System.out.println(">>> Enviando comando desconhecido '" + comando + "' para o servidor...");
@@ -361,14 +352,13 @@ public class ClienteEcho {
                             msg = resposta.get("mensagem").getAsString();
                         }
 
-                        // *** SAÍDA PADRONIZADA ***
                         System.out.println("  >>> (Status " + status + ") " + msg);
 
                     } catch (Exception e) {
                         System.out.println("  >>> Servidor enviou resposta mal formatada: " + respostaJson);
                     }
                 }
-            } // Fim do while
+            }
 
         } catch (UnknownHostException e) {
             System.err.println("Host desconhecido: " + e.getMessage());
