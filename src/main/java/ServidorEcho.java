@@ -3,816 +3,570 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonSyntaxException;
 import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.MalformedJwtException;
-import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
-import io.jsonwebtoken.security.SignatureException;
+
+import javax.crypto.SecretKey;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
-import java.net.ServerSocket;
 import java.net.Socket;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.*;
+import java.text.SimpleDateFormat;
 import java.util.Date;
-import java.util.concurrent.TimeUnit;
-import javax.crypto.SecretKey;
 
 public class ServidorEcho extends Thread {
 
     protected Socket socketCliente;
-    private static final String urlBancoDados = "jdbc:sqlite:votefix.db";
+    private ServidorGUI.Logger logger;
 
+    private static final String urlBancoDados = "jdbc:sqlite:votefix.db";
     private static final String CHAVE_SECRETA_STRING = "QK55qT2jmZAkPHABB1acTQmtLyObqb6E";
     private static final SecretKey CHAVE_SECRETA = Keys.hmacShaKeyFor(CHAVE_SECRETA_STRING.getBytes());
-    private static final long EXPIRACAO_TOKEN_MINUTOS = 60L;
 
-    private final Gson gson = new Gson();
+    public ServidorEcho(Socket clientSocket, ServidorGUI.Logger logger) {
+        this.socketCliente = clientSocket;
+        this.logger = logger;
+        inicializarBanco();
+    }
 
-    private static void inicializarBancoDeDados() {
-        String sqlFilmes = "CREATE TABLE IF NOT EXISTS filmes (id INTEGER PRIMARY KEY AUTOINCREMENT, titulo TEXT NOT NULL, diretor TEXT, ano TEXT, genero TEXT, sinopse TEXT)";
-        String sqlUsuarios = "CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL UNIQUE, senha TEXT NOT NULL, is_admin INTEGER DEFAULT 0)";
-        String sqlReviews = "CREATE TABLE IF NOT EXISTS reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, id_filme INTEGER NOT NULL, titulo TEXT, descricao TEXT, nota TEXT, id_usuario INTEGER, data TEXT, FOREIGN KEY(id_filme) REFERENCES filmes(id), FOREIGN KEY(id_usuario) REFERENCES usuarios(id))";
-        String sqlAdmin = "INSERT OR IGNORE INTO usuarios (nome, senha, is_admin) VALUES ('admin', 'admin', 1)";
+    private void log(String msg) {
+        System.out.println(msg);
+        if (logger != null) logger.log(msg);
+    }
 
-        try (Connection conexao = DriverManager.getConnection(urlBancoDados);
-             Statement comando = conexao.createStatement()) {
-            comando.execute(sqlFilmes);
-            comando.execute(sqlUsuarios);
-            comando.execute(sqlReviews);
-            comando.execute(sqlAdmin);
-            System.out.println("Banco de dados inicializado.");
+    private void inicializarBanco() {
+        String sqlUsuarios = "CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE, senha TEXT, is_admin INTEGER DEFAULT 0)";
+
+        String sqlFilmes = "CREATE TABLE IF NOT EXISTS filmes (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                "titulo TEXT, " +
+                "diretor TEXT, " +
+                "ano TEXT, " +
+                "genero TEXT, " +
+                "sinopse TEXT, " +
+                "nota REAL DEFAULT 0.0, " +
+                "votos INTEGER DEFAULT 0)";
+
+        String sqlReviews = "CREATE TABLE IF NOT EXISTS reviews (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                "id_filme INTEGER, " +
+                "nome_usuario TEXT, " +
+                "titulo TEXT, " +
+                "descricao TEXT, " +
+                "nota INTEGER, " +
+                "data TEXT, " +
+                "editado INTEGER DEFAULT 0, " +
+                "FOREIGN KEY(id_filme) REFERENCES filmes(id))";
+
+        try (Connection conn = DriverManager.getConnection(urlBancoDados);
+             Statement stmt = conn.createStatement()) {
+            stmt.execute(sqlUsuarios);
+            stmt.execute(sqlFilmes);
+            stmt.execute(sqlReviews);
+
+            try {
+                stmt.execute("INSERT INTO usuarios(nome, senha, is_admin) VALUES('admin', 'admin', 1)");
+            } catch (SQLException ignored) {}
+
         } catch (SQLException e) {
-            System.err.println("Erro ao inicializar banco de dados: " + e.getMessage());
-        }
-    }
-
-    public static void main(String[] args) {
-        ServerSocket servidorSocket = null;
-        inicializarBancoDeDados();
-        System.out.println("Qual porta o servidor VoteFlix deve usar? (ex: 23000) ");
-        int porta = 23000;
-
-        try (BufferedReader leitorConsole = new BufferedReader(new InputStreamReader(System.in))) {
-            porta = Integer.parseInt(leitorConsole.readLine());
-        } catch (IOException | NumberFormatException e) {
-            System.err.println("Entrada invalida, usando porta padrao 23000. Erro: " + e.getMessage());
-        }
-
-        System.out.println("Servidor VoteFlix carregado na porta " + porta);
-        System.out.println("Aguardando conexoes....\n ");
-        try {
-            servidorSocket = new ServerSocket(porta);
-            System.out.println("Socket de Conexao criado.\n");
-            while (true) {
-                try {
-                    Socket novoSocketCliente = servidorSocket.accept();
-                    System.out.println("Nova conexao recebida. Criando thread...");
-                    new ServidorEcho(novoSocketCliente);
-                } catch (IOException e) {
-                    System.err.println("Erro ao aceitar conexao cliente: " + e.getMessage());
-                }
-            }
-        } catch (IOException e) {
-            System.err.println("Nao foi possivel ouvir a porta " + porta + " " + e.getMessage());
-            System.exit(1);
-        } finally {
-            if (servidorSocket != null && !servidorSocket.isClosed()) {
-                try {
-                    servidorSocket.close();
-                } catch (IOException e) {
-                    System.err.println("Erro ao fechar server socket: " + e.getMessage());
-                }
-            }
-        }
-    }
-
-    private ServidorEcho(Socket socketCliente) {
-        this.socketCliente = socketCliente;
-        this.start();
-    }
-
-    private class ExcecaoValidacao extends Exception {
-        private final String status;
-        public ExcecaoValidacao(String status, String mensagem) {
-            super(mensagem);
-            this.status = status;
-        }
-        public String getStatus() { return status; }
-    }
-
-    private class ExcecaoAutenticacao extends Exception {
-        private final String status;
-        public ExcecaoAutenticacao(String status, String mensagem) {
-            super(mensagem);
-            this.status = status;
-        }
-        public String getStatus() { return status; }
-    }
-
-    private Claims validarTokenExtrairDados(String token) {
-        if (token == null || token.isEmpty()) {
-            System.err.println("Tentativa de validacao com token nulo ou vazio.");
-            return null;
-        }
-        try {
-            return Jwts.parserBuilder()
-                    .setSigningKey(CHAVE_SECRETA)
-                    .build()
-                    .parseClaimsJws(token)
-                    .getBody();
-        } catch (ExpiredJwtException e) {
-            System.err.println("Token expirado: " + e.getMessage());
-            return null;
-        } catch (MalformedJwtException | SignatureException | IllegalArgumentException e) {
-            System.err.println("Token invalido ou mal formatado: " + e.getMessage());
-            return null;
-        } catch (Exception e) {
-            System.err.println("Erro inesperado ao validar token: " + e.getMessage());
-            return null;
-        }
-    }
-
-    private String criarRespostaErro(String status, String mensagem) {
-        JsonObject resposta = new JsonObject();
-        resposta.addProperty("status", status);
-        resposta.addProperty("mensagem", mensagem);
-        return gson.toJson(resposta);
-    }
-
-    private String criarRespostaSucesso(String status, String mensagem) {
-        JsonObject resposta = new JsonObject();
-        resposta.addProperty("status", status);
-        resposta.addProperty("mensagem", mensagem);
-        return gson.toJson(resposta);
-    }
-
-    private Claims autenticar(JsonObject requisicao) throws ExcecaoAutenticacao {
-        String token;
-        try {
-            if (requisicao.has("token") && requisicao.get("token").isJsonPrimitive() && !requisicao.get("token").getAsString().isEmpty()) {
-                token = requisicao.get("token").getAsString();
-            } else {
-                throw new ExcecaoAutenticacao("401", "Token ausente/invalido");
-            }
-        } catch (Exception e) {
-            throw new ExcecaoAutenticacao("401", "Token ausente/invalido");
-        }
-
-        Claims claims = this.validarTokenExtrairDados(token);
-        if (claims == null) {
-            throw new ExcecaoAutenticacao("401", "Token invalido/expirado");
-        }
-        return claims;
-    }
-
-    private void autorizarAdmin(Claims claims) throws ExcecaoAutenticacao {
-        String funcaoDoToken = claims.get("funcao", String.class);
-        boolean ehAdminDoToken = funcaoDoToken != null && funcaoDoToken.equals("admin");
-
-        if (!ehAdminDoToken) {
-            throw new ExcecaoAutenticacao("403", "Erro: sem permissão");
+            System.out.println("Erro DB Init: " + e.getMessage());
         }
     }
 
     @Override
     public void run() {
-        System.out.println("Nova thread de comunicacao iniciada.");
+        try (
+                PrintWriter out = new PrintWriter(socketCliente.getOutputStream(), true);
+                BufferedReader in = new BufferedReader(new InputStreamReader(socketCliente.getInputStream()));
+        ) {
+            String inputLine;
+            while ((inputLine = in.readLine()) != null) {
 
-        try (PrintWriter saida = new PrintWriter(this.socketCliente.getOutputStream(), true);
-             BufferedReader entrada = new BufferedReader(new InputStreamReader(this.socketCliente.getInputStream()))) {
-
-            String linhaEntrada;
-            while ((linhaEntrada = entrada.readLine()) != null) {
-
-                System.out.println("Cliente enviou: " + linhaEntrada);
-                String respostaJson = "";
-                JsonObject requisicao = null;
-                String operacao = null;
+                log("RECEBIDO: " + inputLine);
 
                 try {
-                    try {
-                        requisicao = gson.fromJson(linhaEntrada, JsonObject.class);
-                    } catch (JsonSyntaxException jsonEx) {
-                        System.err.println("Erro de sintaxe JSON: " + jsonEx.getMessage());
-                        respostaJson = criarRespostaErro("400", "Erro: Operação não encontrada ou inválida (Json do cliente invalido)");
-                        saida.println(respostaJson);
+                    Gson gson = new Gson();
+                    JsonObject jsonRequest = gson.fromJson(inputLine, JsonObject.class);
+
+                    if (!jsonRequest.has("operacao")) {
+                        out.println(gson.toJson(criarRespostaErro("400", "Operação não especificada.")));
                         continue;
                     }
 
-                    if (requisicao == null || !requisicao.has("operacao") || !requisicao.get("operacao").isJsonPrimitive()) {
-                        respostaJson = criarRespostaErro("400", "Erro: Operação não encontrada ou inválida");
-                        saida.println(respostaJson);
-                        continue;
-                    }
+                    String operacao = jsonRequest.get("operacao").getAsString();
+                    JsonObject resposta;
 
-                    operacao = requisicao.get("operacao").getAsString();
+                    // Roteamento
+                    if (operacao.equals("LOGIN")) resposta = login(jsonRequest);
+                    else if (operacao.equals("CRIAR_USUARIO")) resposta = criarUsuario(jsonRequest);
+                    else if (operacao.equals("LISTAR_FILMES")) resposta = listarFilmes(jsonRequest);
+                    else if (operacao.equals("BUSCAR_FILME_ID")) resposta = buscarFilmePorId(jsonRequest);
+                    else if (operacao.equals("LOGOUT")) resposta = criarRespostaSucesso("200", "Logout realizado com sucesso.");
+                    else resposta = verificarAuthEExecutar(jsonRequest, operacao);
 
-                    if (operacao.equals("LOGIN")) {
-                        respostaJson = tratarLogin(requisicao);
+                    String jsonResponse = gson.toJson(resposta);
 
-                    } else if (operacao.equals("CRIAR_USUARIO")) {
-                        respostaJson = tratarCriarUsuario(requisicao);
+                    log("ENVIADO: " + jsonResponse);
+                    log("");
 
-                    } else if (operacao.equals("LISTAR_PROPRIO_USUARIO") ||
-                            operacao.equals("LISTAR_USUARIOS") ||
-                            operacao.equals("EDITAR_PROPRIO_USUARIO") ||
-                            operacao.equals("EXCLUIR_PROPRIO_USUARIO") ||
-                            operacao.equals("LOGOUT") ||
-                            operacao.equals("CRIAR_FILME")  ||
-                            operacao.equals("LISTAR_FILMES")  ||
-                            operacao.equals("EXCLUIR_FILME")  ||
-                            operacao.equals("BUSCAR_FILME_ID")  ||
-                            operacao.equals("EDITAR_FILME")) {
+                    out.println(jsonResponse);
 
-                        Claims claims = autenticar(requisicao);
-                        int idUsuarioDoToken = Integer.parseInt(claims.getSubject());
-
-                        switch (operacao) {
-                            case "LISTAR_PROPRIO_USUARIO":
-                                respostaJson = tratarListarProprioUsuario(idUsuarioDoToken);
-                                break;
-                            case "EDITAR_PROPRIO_USUARIO":
-                                respostaJson = tratarEditarProprioUsuario(requisicao, idUsuarioDoToken);
-                                break;
-                            case "EXCLUIR_PROPRIO_USUARIO":
-                                respostaJson = tratarExcluirProprioUsuario(idUsuarioDoToken);
-                                break;
-                            case "LOGOUT":
-                                respostaJson = tratarLogout();
-                                break;
-                            case "LISTAR_FILMES":
-                                respostaJson = tratarListarFilmes();
-                                break;
-                            case "BUSCAR_FILME_ID":
-                                respostaJson = tratarBuscarFilmePorId(requisicao);
-                                break;
-                            case "CRIAR_FILME":
-                                autorizarAdmin(claims);
-                                respostaJson = tratarCriarFilme(requisicao);
-                                break;
-                            case "EXCLUIR_FILME":
-                                autorizarAdmin(claims);
-                                respostaJson = tratarExcluirFilme(requisicao);
-                                break;
-                            case "EDITAR_FILME":
-                                autorizarAdmin(claims);
-                                respostaJson = tratarEditarFilme(requisicao);
-                                break;
-                            case "LISTAR_USUARIOS":
-                                autorizarAdmin(claims);
-                                respostaJson = tratarListarUsuarios();
-                                break;
-                        }
-                    } else {
-                        respostaJson = criarRespostaErro("400", "Erro: Operação não encontrada ou inválida");
-                    }
-
-                } catch (ExcecaoAutenticacao e) {
-                    respostaJson = criarRespostaErro(e.getStatus(), e.getMessage());
-                } catch (ExcecaoValidacao e) {
-                    respostaJson = criarRespostaErro(e.getStatus(), e.getMessage());
-                } catch (SQLException e) {
-                    System.err.println("Erro SQL na op " + operacao + ": " + e.getMessage());
-                    respostaJson = criarRespostaErro("500", "Erro: Falha interna do servidor");
                 } catch (Exception e) {
-                    String opInfo = (operacao != null) ? operacao : "desconhecida";
-                    System.err.println("Erro inesperado ao processar op '" + opInfo + "': " + e.getMessage());
                     e.printStackTrace();
-                    respostaJson = criarRespostaErro("500", "Erro interno");
+                    JsonObject erro = criarRespostaErro("500", "Erro Interno: " + e.getMessage());
+                    String jsonErro = new Gson().toJson(erro);
+                    log("ENVIADO (ERRO): " + jsonErro);
+                    out.println(jsonErro);
                 }
-
-                if (respostaJson.isEmpty()) {
-                    System.err.println("AVISO: Nenhuma resposta JSON definida para op " + operacao);
-                    respostaJson = criarRespostaErro("500", "Erro: Resposta não gerada");
-                }
-                System.out.println("Servidor respondeu: " + respostaJson);
-                saida.println(respostaJson);
             }
-
-            System.out.println("Cliente desconectou.");
-
         } catch (IOException e) {
-            System.err.println("Problema de comunicacao: " + e.getMessage());
+            // Desconexão
+        }
+    }
+
+    private JsonObject verificarAuthEExecutar(JsonObject req, String operacao) {
+        if (!req.has("token")) return criarRespostaErro("401", "Token não fornecido.");
+        try {
+            Claims claims = Jwts.parserBuilder().setSigningKey(CHAVE_SECRETA).build().parseClaimsJws(req.get("token").getAsString()).getBody();
+            String usuario = claims.getSubject();
+            boolean isAdmin = claims.get("admin", Boolean.class);
+
+            switch (operacao) {
+                // Admin
+                case "CRIAR_FILME": return isAdmin ? criarFilme(req) : criarRespostaErro("403", "Apenas administradores podem realizar esta operação.");
+                case "EDITAR_FILME": return isAdmin ? editarFilme(req) : criarRespostaErro("403", "Apenas administradores podem realizar esta operação.");
+                case "EXCLUIR_FILME": return isAdmin ? excluirFilme(req) : criarRespostaErro("403", "Apenas administradores podem realizar esta operação.");
+                case "LISTAR_USUARIOS": return isAdmin ? listarUsuarios() : criarRespostaErro("403", "Apenas administradores podem realizar esta operação.");
+                case "ADMIN_EDITAR_USUARIO": return isAdmin ? adminEditarUsuario(req) : criarRespostaErro("403", "Apenas administradores podem realizar esta operação.");
+                case "ADMIN_EXCLUIR_USUARIO": return isAdmin ? adminExcluirUsuario(req) : criarRespostaErro("403", "Apenas administradores podem realizar esta operação.");
+
+                // Reviews
+                case "VERIFICAR_REVIEW_USUARIO": return verificarReviewUsuario(req, usuario);
+                case "CRIAR_REVIEW": return criarReview(req, usuario, isAdmin);
+                case "EDITAR_REVIEW": return editarReview(req, usuario);
+                case "EXCLUIR_REVIEW": return excluirReview(req, usuario, isAdmin);
+                case "LISTAR_REVIEWS_USUARIO": return listarReviewsProprioUsuario(usuario);
+
+                // Perfil
+                case "LISTAR_PROPRIO_USUARIO": return listarProprioUsuario(usuario);
+                case "EXCLUIR_PROPRIO_USUARIO": return excluirProprioUsuario(usuario);
+                case "EDITAR_PROPRIO_USUARIO": return editarProprioUsuario(req, usuario);
+
+                default: return criarRespostaErro("400", "Operação desconhecida.");
+            }
         } catch (Exception e) {
-            System.err.println("Erro critico na thread: " + e.getMessage());
-        } finally {
-            try {
-                if (this.socketCliente != null && !this.socketCliente.isClosed()) {
-                    this.socketCliente.close();
-                    System.out.println("Socket do cliente fechado.");
-                }
-            } catch (IOException e) {
-                System.err.println("Erro ao fechar socket cliente: " + e.getMessage());
-            }
-            System.out.println("Thread de comunicacao encerrada.");
+            return criarRespostaErro("401", "Token inválido ou expirado.");
         }
     }
 
-    private String tratarLogin(JsonObject requisicao) throws ExcecaoValidacao, SQLException {
-        String usuario;
-        String senha;
-        try {
-            usuario = requisicao.get("usuario").getAsString();
-            senha = requisicao.get("senha").getAsString();
-        } catch (Exception e) {
-            System.err.println("Erro ao obter 'usuario' ou 'senha' do JSON: " + e.getMessage());
-            throw new ExcecaoValidacao("422", "Erro: Chaves faltantes ou invalidas");
-        }
+    // --- MÉTODOS DE FILMES (COM EDITAR) ---
 
-        String sql = "SELECT id, is_admin FROM usuarios WHERE nome = ? AND senha = ?";
-        try (Connection conexao = DriverManager.getConnection(urlBancoDados);
-             PreparedStatement comandoSql = conexao.prepareStatement(sql)) {
-            comandoSql.setString(1, usuario);
-            comandoSql.setString(2, senha);
-            try (ResultSet resultado = comandoSql.executeQuery()) {
-                if (resultado.next()) {
-                    int idUsuario = resultado.getInt("id");
-                    boolean ehAdminBanco = resultado.getInt("is_admin") == 1;
-                    Date agora = new Date();
-                    Date dataExpiracao = new Date(agora.getTime() + TimeUnit.MINUTES.toMillis(EXPIRACAO_TOKEN_MINUTOS));
-                    String tokenJwt = Jwts.builder()
-                            .setSubject(String.valueOf(idUsuario))
-                            .claim("usuario", usuario)
-                            .claim("funcao", ehAdminBanco ? "admin" : "user")
-                            .setIssuedAt(agora)
-                            .setExpiration(dataExpiracao)
-                            .signWith(CHAVE_SECRETA, SignatureAlgorithm.HS256)
-                            .compact();
+    private JsonObject editarFilme(JsonObject req) {
+        if (!req.has("filme")) return criarRespostaErro("422", "Dados do filme faltando.");
+        JsonObject f = req.getAsJsonObject("filme");
+        if(!f.has("id")) return criarRespostaErro("422", "ID do filme necessário.");
 
-                    JsonObject resposta = new JsonObject();
-                    resposta.addProperty("status", "200");
-                    resposta.addProperty("mensagem", "Sucesso: operação realizada com sucesso");
-                    resposta.addProperty("token", tokenJwt);
-                    return gson.toJson(resposta);
-                } else {
-                    return criarRespostaErro("422", "Erro: Chaves faltantes ou invalidas");
-                }
-            }
-        }
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            String sql = "UPDATE filmes SET titulo=?, diretor=?, ano=?, genero=?, sinopse=? WHERE id=?";
+            PreparedStatement ps = conn.prepareStatement(sql);
+            ps.setString(1, f.get("titulo").getAsString());
+            ps.setString(2, f.get("diretor").getAsString());
+            ps.setString(3, f.get("ano").getAsString());
+
+            JsonArray ga = f.getAsJsonArray("genero");
+            StringBuilder sb = new StringBuilder();
+            for(int i=0;i<ga.size();i++) { sb.append(ga.get(i).getAsString()); if(i<ga.size()-1) sb.append(","); }
+            ps.setString(4, sb.toString());
+
+            ps.setString(5, f.has("sinopse") ? f.get("sinopse").getAsString() : "");
+            ps.setString(6, f.get("id").getAsString());
+
+            if (ps.executeUpdate() > 0) return criarRespostaSucesso("200", "Filme atualizado com sucesso.");
+            else return criarRespostaErro("404", "Filme não encontrado.");
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro ao editar filme."); }
     }
 
-    private String tratarCriarUsuario(JsonObject requisicao) throws ExcecaoValidacao, SQLException {
-        String nome;
-        String senha;
-        try {
-            JsonObject usuarioJson = requisicao.get("usuario").getAsJsonObject();
-            nome = usuarioJson.get("nome").getAsString();
-            senha = usuarioJson.get("senha").getAsString();
-        } catch (Exception e) {
-            System.err.println("Erro JSON em CRIAR_USUARIO: " + e.getMessage());
-            throw new ExcecaoValidacao("422", "Erro: Chaves faltantes ou invalidas");
-        }
+    // --- MÉTODOS DE REVIEWS (COM EXCLUSÃO E CÁLCULO REVERSO) ---
 
-        if (nome.isEmpty() || senha.isEmpty() || nome.length() > 50 || senha.length() < 3) {
-            throw new ExcecaoValidacao("405", "Erro: Campos inválidos, verifique o tipo e quantidade de caracteres");
-        }
+    private JsonObject excluirReview(JsonObject req, String usuario, boolean isAdmin) {
+        if (!req.has("id")) return criarRespostaErro("422", "ID da review faltando.");
+        String idReview = req.get("id").getAsString();
 
-        String sql = "INSERT INTO usuarios(nome, senha) VALUES(?,?)";
-        try (Connection conexao = DriverManager.getConnection(urlBancoDados);
-             PreparedStatement comandoSql = conexao.prepareStatement(sql)) {
-            comandoSql.setString(1, nome);
-            comandoSql.setString(2, senha);
-            comandoSql.executeUpdate();
-            return criarRespostaSucesso("201", "Sucesso: Recurso cadastrado");
-        } catch (SQLException e) {
-            if (e.getMessage() != null && e.getMessage().contains("UNIQUE constraint failed: usuarios.nome")) {
-                return criarRespostaErro("409", "Erro: Recurso ja existe");
-            } else {
-                throw e;
-            }
-        }
-    }
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            // 1. Buscar a review para pegar a nota e o ID do filme
+            String sqlBusca = "SELECT nota, id_filme FROM reviews WHERE id=? AND nome_usuario=?";
+            PreparedStatement psBusca = conn.prepareStatement(sqlBusca);
+            psBusca.setString(1, idReview);
+            psBusca.setString(2, usuario);
+            ResultSet rsRev = psBusca.executeQuery();
 
-    private String tratarListarProprioUsuario(int idUsuarioDoToken) throws SQLException {
-        String sql = "SELECT nome FROM usuarios WHERE id = ?";
-        try (Connection conexao = DriverManager.getConnection(urlBancoDados);
-             PreparedStatement comandoSql = conexao.prepareStatement(sql)) {
-            comandoSql.setInt(1, idUsuarioDoToken);
-            try (ResultSet resultado = comandoSql.executeQuery()) {
-                if (resultado.next()) {
-                    JsonObject resposta = new JsonObject();
-                    resposta.addProperty("status", "200");
-                    resposta.addProperty("mensagem", "Sucesso: operação realizada com sucesso");
-                    resposta.addProperty("usuario", resultado.getString("nome"));
-                    return gson.toJson(resposta);
-                } else {
-                    return criarRespostaErro("404", "Erro: Recurso inexistente");
-                }
-            }
-        }
-    }
+            if (!rsRev.next()) return criarRespostaErro("404", "Review não encontrada ou não pertence a você.");
 
-    private String tratarEditarProprioUsuario(JsonObject requisicao, int idUsuarioDoToken) throws ExcecaoValidacao, SQLException {
-        String novaSenha;
-        try {
-            JsonObject usuarioJson = requisicao.get("usuario").getAsJsonObject();
-            novaSenha = usuarioJson.get("senha").getAsString();
-        } catch (Exception e) {
-            System.err.println("Erro JSON em EDITAR_PROPRIO_USUARIO: " + e.getMessage());
-            throw new ExcecaoValidacao("422", "Erro: Chaves faltantes ou invalidas");
-        }
+            int notaRemovida = rsRev.getInt("nota");
+            int idFilme = rsRev.getInt("id_filme");
 
-        if (novaSenha == null || novaSenha.isEmpty() || novaSenha.length() < 3) {
-            throw new ExcecaoValidacao("405", "Erro: Campos inválidos, verifique o tipo e quantidade de caracteres");
-        }
+            // 2. Deletar a review
+            String sqlDel = "DELETE FROM reviews WHERE id=?";
+            PreparedStatement psDel = conn.prepareStatement(sqlDel);
+            psDel.setString(1, idReview);
+            psDel.executeUpdate();
 
-        String sql = "UPDATE usuarios SET senha = ? WHERE id = ?";
-        try (Connection conexao = DriverManager.getConnection(urlBancoDados);
-             PreparedStatement comandoSql = conexao.prepareStatement(sql)) {
-            comandoSql.setString(1, novaSenha);
-            comandoSql.setInt(2, idUsuarioDoToken);
-            int linhasAfetadas = comandoSql.executeUpdate();
+            // 3. Recalcular Média do Filme (Fórmula Inversa)
+            String sqlFilme = "SELECT nota, votos FROM filmes WHERE id=?";
+            PreparedStatement psFilme = conn.prepareStatement(sqlFilme);
+            psFilme.setInt(1, idFilme);
+            ResultSet rsFilme = psFilme.executeQuery();
 
-            if (linhasAfetadas > 0) {
-                return criarRespostaSucesso("200", "Sucesso: operação realizada com sucesso");
-            } else {
-                return criarRespostaErro("404", "Erro: Recurso inexistente");
-            }
-        }
-    }
+            if (rsFilme.next()) {
+                double mediaAtual = rsFilme.getDouble("nota");
+                int votosAtuais = rsFilme.getInt("votos");
 
-    private String tratarExcluirProprioUsuario(int idUsuarioDoToken) throws SQLException {
-        Connection conexao = null;
-        boolean sucesso = false;
-        try {
-            conexao = DriverManager.getConnection(urlBancoDados);
-            conexao.setAutoCommit(false);
+                double novaMedia = 0.0;
+                int novosVotos = votosAtuais - 1;
 
-            try (PreparedStatement psR = conexao.prepareStatement("DELETE FROM reviews WHERE id_usuario = ?")) {
-                psR.setInt(1, idUsuarioDoToken);
-                psR.executeUpdate();
-            }
-
-            try (PreparedStatement psU = conexao.prepareStatement("DELETE FROM usuarios WHERE id = ?")) {
-                psU.setInt(1, idUsuarioDoToken);
-                if (psU.executeUpdate() > 0) sucesso = true;
-            }
-
-            conexao.commit();
-
-            if (sucesso) {
-                return criarRespostaSucesso("200", "Sucesso: operação realizada com sucesso");
-            } else {
-                return criarRespostaErro("404", "Erro: Recurso inexistente");
-            }
-
-        } catch (SQLException e) {
-            if (conexao != null) try {
-                conexao.rollback();
-            } catch (SQLException ex) {
-                System.err.println("Erro rollback: " + ex.getMessage());
-            }
-            throw e;
-        } finally {
-            if (conexao != null) try {
-                conexao.setAutoCommit(true);
-                conexao.close();
-            } catch (SQLException ex) {
-                System.err.println("Erro fechar conexao: " + ex.getMessage());
-            }
-        }
-    }
-
-    private String tratarLogout() {
-        return criarRespostaSucesso("200", "Sucesso: operação realizada com sucesso");
-    }
-
-    private String tratarCriarFilme(JsonObject requisicao) throws ExcecaoValidacao, SQLException {
-        String titulo, diretor, ano, sinopse, generos;
-        JsonArray generoArray;
-
-        try {
-            JsonObject filmeJson = requisicao.get("filme").getAsJsonObject();
-            titulo = filmeJson.get("titulo").getAsString();
-            diretor = filmeJson.get("diretor").getAsString();
-            ano = filmeJson.get("ano").getAsString();
-            generoArray = filmeJson.get("genero").getAsJsonArray();
-            sinopse = filmeJson.get("sinopse").getAsString();
-
-            StringBuilder generoBuilder = new StringBuilder();
-            for (int i = 0; i < generoArray.size(); i++) {
-                generoBuilder.append(generoArray.get(i).getAsString());
-                if (i < generoArray.size() - 1) generoBuilder.append(", ");
-            }
-            generos = generoBuilder.toString();
-
-        } catch (Exception e) {
-            System.err.println("Erro JSON/DB em CRIAR_FILME: " + e.getMessage());
-            throw new ExcecaoValidacao("422", "Erro: Chaves faltantes ou invalidas");
-        }
-
-        if (titulo.length() < 3 || titulo.length() > 30 ||
-                diretor.length() < 3 || diretor.length() > 30 ||
-                ano.length() < 3 || ano.length() > 4 || !ano.matches("\\d+") ||
-                sinopse.length() > 250 ||
-                generoArray.isEmpty()) {
-            throw new ExcecaoValidacao("405", "Erro: Campos inválidos, verifique o tipo e quantidade de caracteres");
-        }
-
-        String sqlCheck = "SELECT id FROM filmes WHERE titulo = ? AND diretor = ? AND ano = ?";
-        String sqlInsert = "INSERT INTO filmes(titulo, diretor, ano, genero, sinopse) VALUES(?,?,?,?,?)";
-
-        try (Connection conexao = DriverManager.getConnection(urlBancoDados)) {
-            try (PreparedStatement comandoCheck = conexao.prepareStatement(sqlCheck)) {
-                comandoCheck.setString(1, titulo);
-                comandoCheck.setString(2, diretor);
-                comandoCheck.setString(3, ano);
-                try (ResultSet rs = comandoCheck.executeQuery()) {
-                    if (rs.next()) {
-                        return criarRespostaErro("409", "Erro: Recurso ja existe (filme com mesmo titulo, diretor e ano)");
-                    } else {
-                        try (PreparedStatement comandoInsert = conexao.prepareStatement(sqlInsert)) {
-                            comandoInsert.setString(1, titulo);
-                            comandoInsert.setString(2, diretor);
-                            comandoInsert.setString(3, ano);
-                            comandoInsert.setString(4, generos);
-                            comandoInsert.setString(5, sinopse);
-                            comandoInsert.executeUpdate();
-                            return criarRespostaSucesso("201", "Sucesso: Recurso cadastrado");
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private String tratarListarFilmes() throws SQLException {
-        JsonArray filmesArray = new JsonArray();
-        String sql = "SELECT f.id, f.titulo, f.diretor, f.ano, f.genero, f.sinopse, " +
-                "       COALESCE(AVG(CAST(r.nota AS REAL)), 0.0) AS nota_media, " +
-                "       COUNT(r.id) AS qtd_avaliacoes " +
-                "FROM filmes f " +
-                "LEFT JOIN reviews r ON f.id = r.id_filme " +
-                "GROUP BY f.id, f.titulo, f.diretor, f.ano, f.genero, f.sinopse";
-
-        try (Connection conexao = DriverManager.getConnection(urlBancoDados);
-             PreparedStatement comandoSql = conexao.prepareStatement(sql);
-             ResultSet resultado = comandoSql.executeQuery()) {
-
-            while (resultado.next()) {
-                JsonObject filmeObj = new JsonObject();
-                filmeObj.addProperty("id", String.valueOf(resultado.getInt("id")));
-                filmeObj.addProperty("titulo", resultado.getString("titulo"));
-                filmeObj.addProperty("diretor", resultado.getString("diretor"));
-                filmeObj.addProperty("ano", resultado.getString("ano"));
-                filmeObj.addProperty("sinopse", resultado.getString("sinopse"));
-
-                String generosDB = resultado.getString("genero");
-                JsonArray generosJson = new JsonArray();
-                if (generosDB != null && !generosDB.isEmpty()) {
-                    String[] generosArray = generosDB.split(",");
-                    for (String g : generosArray) {
-                        generosJson.add(g.trim());
-                    }
-                }
-                filmeObj.add("genero", generosJson);
-
-                filmeObj.addProperty("nota", String.format("%.1f", resultado.getDouble("nota_media")));
-                filmeObj.addProperty("qtd_avaliacoes", String.valueOf(resultado.getInt("qtd_avaliacoes")));
-                filmesArray.add(filmeObj);
-            }
-
-            JsonObject respostaObj = new JsonObject();
-            respostaObj.addProperty("status", "200");
-            respostaObj.addProperty("mensagem", "Sucesso: Operação realizada com sucesso");
-            respostaObj.add("filmes", filmesArray);
-            return gson.toJson(respostaObj);
-        }
-    }
-
-    private String tratarExcluirFilme(JsonObject requisicao) throws ExcecaoValidacao, SQLException {
-        String idFilmeParaExcluir;
-        int idFilme;
-        Connection conexao = null;
-        boolean sucesso = false;
-
-        try {
-            idFilmeParaExcluir = requisicao.get("id").getAsString();
-            if (idFilmeParaExcluir == null || idFilmeParaExcluir.isEmpty()) {
-                throw new ExcecaoValidacao("422", "ID do filme ausente.");
-            }
-            idFilme = Integer.parseInt(idFilmeParaExcluir);
-        } catch (NumberFormatException e) {
-            throw new ExcecaoValidacao("422", "Erro: ID do filme inválido");
-        } catch (Exception e) {
-            throw new ExcecaoValidacao("422", "Erro: Chaves faltantes ou invalidas");
-        }
-
-        try {
-            conexao = DriverManager.getConnection(urlBancoDados);
-            conexao.setAutoCommit(false);
-
-            String sqlDeleteReviews = "DELETE FROM reviews WHERE id_filme = ?";
-            try (PreparedStatement psReviews = conexao.prepareStatement(sqlDeleteReviews)) {
-                psReviews.setInt(1, idFilme);
-                psReviews.executeUpdate();
-            }
-
-            String sqlDeleteFilme = "DELETE FROM filmes WHERE id = ?";
-            try (PreparedStatement psFilme = conexao.prepareStatement(sqlDeleteFilme)) {
-                psFilme.setInt(1, idFilme);
-                int linhasAfetadas = psFilme.executeUpdate();
-                if (linhasAfetadas > 0) {
-                    sucesso = true;
-                }
-            }
-
-            if (sucesso) {
-                conexao.commit();
-                return criarRespostaSucesso("200", "Sucesso: operação realizada com sucesso");
-            } else {
-                conexao.rollback();
-                return criarRespostaErro("404", "Erro: Recurso inexistente");
-            }
-        } catch (SQLException e) {
-            if (conexao != null) try { conexao.rollback(); } catch (SQLException ex) {}
-            throw e;
-        } finally {
-            if (conexao != null) try { conexao.setAutoCommit(true); conexao.close(); } catch (SQLException ex) {}
-        }
-    }
-
-    private String tratarListarUsuarios() throws SQLException {
-        JsonArray usuariosArray = new JsonArray();
-        String sql = "SELECT id, nome FROM usuarios";
-
-        try (Connection conexao = DriverManager.getConnection(urlBancoDados);
-             PreparedStatement comandoSql = conexao.prepareStatement(sql);
-             ResultSet resultado = comandoSql.executeQuery()) {
-
-            while (resultado.next()) {
-                JsonObject usuarioObj = new JsonObject();
-                usuarioObj.addProperty("id", String.valueOf(resultado.getInt("id")));
-                usuarioObj.addProperty("nome", resultado.getString("nome"));
-                usuariosArray.add(usuarioObj);
-            }
-
-            JsonObject respostaObj = new JsonObject();
-            respostaObj.addProperty("status", "200");
-            respostaObj.addProperty("mensagem", "Sucesso: operação realizada com sucesso");
-            respostaObj.add("usuarios", usuariosArray);
-            return gson.toJson(respostaObj);
-        }
-    }
-
-    private String tratarBuscarFilmePorId(JsonObject requisicao) throws ExcecaoValidacao, SQLException {
-        JsonObject filmeObj = null;
-        JsonArray reviewsArray = new JsonArray();
-        int idFilme;
-
-        try {
-            String idFilmeReq = requisicao.get("id_filme").getAsString();
-            idFilme = Integer.parseInt(idFilmeReq);
-        } catch (Exception e) {
-            throw new ExcecaoValidacao("422", "Erro: Chaves faltantes ou invalidas (id_filme)");
-        }
-
-        try (Connection conexao = DriverManager.getConnection(urlBancoDados)) {
-            String sqlFilme = "SELECT f.id, f.titulo, f.diretor, f.ano, f.genero, f.sinopse, " +
-                    "       COALESCE(AVG(CAST(r.nota AS REAL)), 0.0) AS nota_media, " +
-                    "       COUNT(r.id) AS qtd_avaliacoes " +
-                    "FROM filmes f " +
-                    "LEFT JOIN reviews r ON f.id = r.id_filme " +
-                    "WHERE f.id = ? " +
-                    "GROUP BY f.id, f.titulo, f.diretor, f.ano, f.genero, f.sinopse";
-
-            try (PreparedStatement comandoFilme = conexao.prepareStatement(sqlFilme)) {
-                comandoFilme.setInt(1, idFilme);
-                try (ResultSet rsFilme = comandoFilme.executeQuery()) {
-                    if (rsFilme.next()) {
-                        filmeObj = new JsonObject();
-                        filmeObj.addProperty("id", String.valueOf(rsFilme.getInt("id")));
-                        filmeObj.addProperty("titulo", rsFilme.getString("titulo"));
-                        filmeObj.addProperty("diretor", rsFilme.getString("diretor"));
-                        filmeObj.addProperty("ano", rsFilme.getString("ano"));
-                        filmeObj.addProperty("sinopse", rsFilme.getString("sinopse"));
-                        JsonArray generosJson = new JsonArray();
-                        String generosDB = rsFilme.getString("genero");
-                        if (generosDB != null && !generosDB.isEmpty()) {
-                            for (String g : generosDB.split(",")) {
-                                generosJson.add(g.trim());
-                            }
-                        }
-                        filmeObj.add("genero", generosJson);
-                        filmeObj.addProperty("nota", String.format("%.1f", rsFilme.getDouble("nota_media")));
-                        filmeObj.addProperty("qtd_avaliacoes", String.valueOf(rsFilme.getInt("qtd_avaliacoes")));
-                    }
-                }
-            }
-
-            if (filmeObj == null) {
-                return criarRespostaErro("404", "Erro: Recurso inexistente");
-            } else {
-                String sqlReviews = "SELECT r.id, r.id_filme, u.nome AS nome_usuario, " +
-                        "       r.nota, r.titulo, r.descricao, r.data " +
-                        "FROM reviews r JOIN usuarios u ON r.id_usuario = u.id " +
-                        "WHERE r.id_filme = ?";
-
-                try (PreparedStatement comandoReviews = conexao.prepareStatement(sqlReviews)) {
-                    comandoReviews.setInt(1, idFilme);
-                    try (ResultSet rsReviews = comandoReviews.executeQuery()) {
-                        while (rsReviews.next()) {
-                            JsonObject reviewObj = new JsonObject();
-                            reviewObj.addProperty("id", String.valueOf(rsReviews.getInt("id")));
-                            reviewObj.addProperty("id_filme", String.valueOf(rsReviews.getInt("id_filme")));
-                            reviewObj.addProperty("nome_usuario", rsReviews.getString("nome_usuario"));
-                            reviewObj.addProperty("nota", rsReviews.getString("nota"));
-                            reviewObj.addProperty("titulo", rsReviews.getString("titulo"));
-                            reviewObj.addProperty("descricao", rsReviews.getString("descricao"));
-                            reviewObj.addProperty("data", rsReviews.getString("data"));
-                            reviewsArray.add(reviewObj);
-                        }
-                    }
+                if (novosVotos > 0) {
+                    // (MediaAtual * VotosAtuais - NotaRemovida) / (VotosAtuais - 1)
+                    novaMedia = ((mediaAtual * votosAtuais) - notaRemovida) / novosVotos;
                 }
 
-                JsonObject respostaObj = new JsonObject();
-                respostaObj.addProperty("status", "200");
-                respostaObj.addProperty("mensagem", "Sucesso: operação realizada com sucesso");
-                respostaObj.add("filme", filmeObj);
-                respostaObj.add("reviews", reviewsArray);
-                return gson.toJson(respostaObj);
+                String sqlUpd = "UPDATE filmes SET nota=?, votos=? WHERE id=?";
+                PreparedStatement psUpd = conn.prepareStatement(sqlUpd);
+                psUpd.setDouble(1, novaMedia);
+                psUpd.setInt(2, novosVotos);
+                psUpd.setInt(3, idFilme);
+                psUpd.executeUpdate();
             }
-        }
+
+            return criarRespostaSucesso("200", "Review excluída com sucesso.");
+
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro interno."); }
     }
 
-    private String tratarEditarFilme(JsonObject requisicao) throws ExcecaoValidacao, SQLException {
-        String titulo, diretor, ano, sinopse, generos, idFilmeStr;
-        JsonArray generoArray;
-        int idFilme;
+    // --- MÉTODOS DE ADMINISTRAÇÃO DE USUÁRIOS ---
 
+    private JsonObject adminEditarUsuario(JsonObject req) {
+        if (!req.has("id") || !req.has("usuario")) return criarRespostaErro("422", "Chaves faltantes.");
+        String idAlvo = req.get("id").getAsString();
+        JsonObject userObj = req.getAsJsonObject("usuario");
+        if (!userObj.has("senha")) return criarRespostaErro("422", "Senha faltante.");
+        String novaSenha = userObj.get("senha").getAsString();
+
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            String sql = "UPDATE usuarios SET senha = ? WHERE id = ?";
+            PreparedStatement pstmt = conn.prepareStatement(sql);
+            pstmt.setString(1, novaSenha);
+            pstmt.setString(2, idAlvo);
+            if (pstmt.executeUpdate() > 0) return criarRespostaSucesso("200", "Operação realizada com sucesso");
+            else return criarRespostaErro("404", "Usuário não encontrado.");
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro interno."); }
+    }
+
+    private JsonObject adminExcluirUsuario(JsonObject req) {
+        if (!req.has("id")) return criarRespostaErro("422", "ID faltante.");
+        String idAlvo = req.get("id").getAsString();
+
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            String sql = "DELETE FROM usuarios WHERE id = ?";
+            PreparedStatement pstmt = conn.prepareStatement(sql);
+            pstmt.setString(1, idAlvo);
+            if (pstmt.executeUpdate() > 0) return criarRespostaSucesso("200", "Operação realizada com sucesso");
+            else return criarRespostaErro("404", "Usuário não encontrado.");
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro interno."); }
+    }
+
+    // --- MÉTODOS PADRÃO (LISTAR, CRIAR, LOGIN) ---
+
+    private JsonObject listarReviewsProprioUsuario(String usuario) {
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            String sql = "SELECT * FROM reviews WHERE nome_usuario = ?";
+            PreparedStatement ps = conn.prepareStatement(sql);
+            ps.setString(1, usuario);
+            ResultSet rs = ps.executeQuery();
+            JsonArray reviews = new JsonArray();
+            while (rs.next()) {
+                JsonObject rev = new JsonObject();
+                rev.addProperty("id", String.valueOf(rs.getInt("id")));
+                rev.addProperty("id_filme", String.valueOf(rs.getInt("id_filme")));
+                rev.addProperty("nome_usuario", rs.getString("nome_usuario"));
+                rev.addProperty("nota", String.valueOf(rs.getInt("nota")));
+                rev.addProperty("titulo", rs.getString("titulo"));
+                rev.addProperty("descricao", rs.getString("descricao"));
+                rev.addProperty("data", rs.getString("data"));
+                rev.addProperty("editado", rs.getInt("editado") == 1 ? "true" : "false");
+                reviews.add(rev);
+            }
+            JsonObject resp = criarRespostaSucesso("200", "Operação realizada com sucesso");
+            resp.add("reviews", reviews);
+            return resp;
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro interno."); }
+    }
+
+    private JsonObject listarUsuarios() {
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            String sql = "SELECT id, nome FROM usuarios";
+            Statement stmt = conn.createStatement();
+            ResultSet rs = stmt.executeQuery(sql);
+            JsonArray lista = new JsonArray();
+            while (rs.next()) {
+                JsonObject u = new JsonObject();
+                u.addProperty("id", rs.getInt("id"));
+                u.addProperty("nome", rs.getString("nome"));
+                lista.add(u);
+            }
+            JsonObject r = criarRespostaSucesso("200", "Operação realizada com sucesso.");
+            r.add("usuarios", lista);
+            return r;
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
+    }
+
+    private JsonObject listarProprioUsuario(String usuario) {
+        JsonObject r = criarRespostaSucesso("200", "Operação realizada com sucesso.");
+        r.addProperty("usuario", usuario);
+        return r;
+    }
+
+    private JsonObject editarProprioUsuario(JsonObject req, String usuario) {
+        if (!req.has("usuario")) return criarRespostaErro("422", "Chaves faltantes.");
+        JsonObject u = req.getAsJsonObject("usuario");
+        if(u.has("senha")) {
+            try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+                PreparedStatement ps = conn.prepareStatement("UPDATE usuarios SET senha=? WHERE nome=?");
+                ps.setString(1, u.get("senha").getAsString());
+                ps.setString(2, usuario);
+                ps.executeUpdate();
+                return criarRespostaSucesso("200", "Operação realizada com sucesso");
+            } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
+        }
+        return criarRespostaErro("400", "Nada a alterar.");
+    }
+
+    private JsonObject listarFilmes(JsonObject req) {
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            String sql = "SELECT * FROM filmes";
+            Statement stmt = conn.createStatement();
+            ResultSet rs = stmt.executeQuery(sql);
+            JsonArray lista = new JsonArray();
+            while (rs.next()) {
+                JsonObject f = new JsonObject();
+                f.addProperty("id", rs.getInt("id"));
+                f.addProperty("titulo", rs.getString("titulo"));
+                f.addProperty("diretor", rs.getString("diretor"));
+                f.addProperty("ano", rs.getString("ano"));
+                f.addProperty("nota", String.format("%.1f", rs.getDouble("nota")).replace(',', '.'));
+                f.addProperty("qtd_avaliacoes", rs.getInt("votos"));
+                lista.add(f);
+            }
+            JsonObject r = criarRespostaSucesso("200", "Operação realizada com sucesso.");
+            r.add("filmes", lista);
+            return r;
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
+    }
+
+    private JsonObject buscarFilmePorId(JsonObject req) {
+        String id = req.get("id_filme").getAsString();
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            PreparedStatement ps = conn.prepareStatement("SELECT * FROM filmes WHERE id=?");
+            ps.setString(1, id);
+            ResultSet rs = ps.executeQuery();
+            if(!rs.next()) return criarRespostaErro("404", "Filme não encontrado.");
+
+            JsonObject filme = new JsonObject();
+            filme.addProperty("id", rs.getInt("id"));
+            filme.addProperty("titulo", rs.getString("titulo"));
+            filme.addProperty("sinopse", rs.getString("sinopse"));
+            filme.addProperty("diretor", rs.getString("diretor"));
+            filme.addProperty("ano", rs.getString("ano"));
+            filme.addProperty("nota", String.format("%.1f", rs.getDouble("nota")).replace(',', '.'));
+            filme.addProperty("qtd_avaliacoes", rs.getInt("votos"));
+            JsonArray ja = new JsonArray();
+            if(rs.getString("genero") != null) for(String s : rs.getString("genero").split(",")) ja.add(s);
+            filme.add("genero", ja);
+
+            PreparedStatement psRev = conn.prepareStatement("SELECT * FROM reviews WHERE id_filme=?");
+            psRev.setString(1, id);
+            ResultSet rsRev = psRev.executeQuery();
+            JsonArray reviews = new JsonArray();
+            while(rsRev.next()) {
+                JsonObject rev = new JsonObject();
+                rev.addProperty("id", rsRev.getInt("id"));
+                rev.addProperty("id_filme", rsRev.getInt("id_filme"));
+                rev.addProperty("nome_usuario", rsRev.getString("nome_usuario"));
+                rev.addProperty("titulo", rsRev.getString("titulo"));
+                rev.addProperty("descricao", rsRev.getString("descricao"));
+                rev.addProperty("nota", rsRev.getString("nota"));
+                rev.addProperty("data", rsRev.getString("data"));
+                rev.addProperty("editado", rsRev.getInt("editado") == 1 ? "true" : "false");
+                reviews.add(rev);
+            }
+            JsonObject resp = criarRespostaSucesso("200", "Operação realizada com sucesso.");
+            resp.add("filme", filme);
+            resp.add("reviews", reviews);
+            return resp;
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
+    }
+
+    private JsonObject criarReview(JsonObject req, String usuario, boolean isAdmin) {
+        if (isAdmin) return criarRespostaErro("403", "Administradores não podem realizar avaliações.");
+        JsonObject rev = req.getAsJsonObject("review");
+        String idFilme = rev.get("id_filme").getAsString();
+        int notaNova;
         try {
-            JsonObject filmeJson = requisicao.get("filme").getAsJsonObject();
-            idFilmeStr = filmeJson.get("id").getAsString();
-            titulo = filmeJson.get("titulo").getAsString();
-            diretor = filmeJson.get("diretor").getAsString();
-            ano = filmeJson.get("ano").getAsString();
-            generoArray = filmeJson.get("genero").getAsJsonArray();
-            sinopse = filmeJson.get("sinopse").getAsString();
+            notaNova = Integer.parseInt(rev.get("nota").getAsString());
+            if(notaNova < 1 || notaNova > 5) return criarRespostaErro("405", "A nota deve ser entre 1 e 5.");
+        } catch (Exception e) { return criarRespostaErro("405", "Formato de nota inválido."); }
 
-            idFilme = Integer.parseInt(idFilmeStr);
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            PreparedStatement psFilme = conn.prepareStatement("SELECT nota, votos FROM filmes WHERE id=?");
+            psFilme.setString(1, idFilme);
+            ResultSet rsFilme = psFilme.executeQuery();
+            if (!rsFilme.next()) return criarRespostaErro("404", "Filme não encontrado.");
 
-            StringBuilder generoBuilder = new StringBuilder();
-            for (int i = 0; i < generoArray.size(); i++) {
-                generoBuilder.append(generoArray.get(i).getAsString());
-                if (i < generoArray.size() - 1) generoBuilder.append(", ");
+            double mediaAtual = rsFilme.getDouble("nota");
+            int votosAtuais = rsFilme.getInt("votos");
+
+            PreparedStatement psDup = conn.prepareStatement("SELECT id FROM reviews WHERE id_filme=? AND nome_usuario=?");
+            psDup.setString(1, idFilme);
+            psDup.setString(2, usuario);
+            if(psDup.executeQuery().next()) return criarRespostaErro("409", "Você já avaliou este filme.");
+
+            double novaMedia = ((mediaAtual * votosAtuais) + notaNova) / (votosAtuais + 1);
+            int novosVotos = votosAtuais + 1;
+
+            String sqlUpdateFilme = "UPDATE filmes SET nota=?, votos=? WHERE id=?";
+            PreparedStatement psUpd = conn.prepareStatement(sqlUpdateFilme);
+            psUpd.setDouble(1, novaMedia);
+            psUpd.setInt(2, novosVotos);
+            psUpd.setString(3, idFilme);
+            psUpd.executeUpdate();
+
+            String dataAtual = new SimpleDateFormat("dd/MM/yyyy").format(new Date());
+            String sqlInsertRev = "INSERT INTO reviews(id_filme, nome_usuario, titulo, descricao, nota, data, editado) VALUES(?,?,?,?,?,?,0)";
+            PreparedStatement psIns = conn.prepareStatement(sqlInsertRev);
+            psIns.setString(1, idFilme);
+            psIns.setString(2, usuario);
+            psIns.setString(3, rev.get("titulo").getAsString());
+            psIns.setString(4, rev.get("descricao").getAsString());
+            psIns.setInt(5, notaNova);
+            psIns.setString(6, dataAtual);
+            psIns.executeUpdate();
+
+            return criarRespostaSucesso("201", "Avaliação criada com sucesso.");
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
+    }
+
+    private JsonObject verificarReviewUsuario(JsonObject req, String usuario) {
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            PreparedStatement ps = conn.prepareStatement("SELECT * FROM reviews WHERE id_filme=? AND nome_usuario=?");
+            ps.setString(1, req.get("id_filme").getAsString());
+            ps.setString(2, usuario);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) {
+                JsonObject r = new JsonObject();
+                r.addProperty("id", rs.getInt("id"));
+                r.addProperty("titulo", rs.getString("titulo"));
+                r.addProperty("descricao", rs.getString("descricao"));
+                r.addProperty("nota", rs.getString("nota"));
+                JsonObject resp = criarRespostaSucesso("200", "Review encontrada.");
+                resp.add("review", r);
+                return resp;
+            } else return criarRespostaErro("404", "Nenhuma review encontrada.");
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
+    }
+
+    private JsonObject editarReview(JsonObject req, String usuario) {
+        JsonObject rev = req.getAsJsonObject("review");
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            String sql = "UPDATE reviews SET titulo=?, descricao=?, nota=?, editado=1 WHERE id_filme=? AND nome_usuario=?";
+            PreparedStatement ps = conn.prepareStatement(sql);
+            ps.setString(1, rev.get("titulo").getAsString());
+            ps.setString(2, rev.get("descricao").getAsString());
+            ps.setString(3, rev.get("nota").getAsString());
+            ps.setString(4, rev.get("id_filme").getAsString());
+            ps.setString(5, usuario);
+            if(ps.executeUpdate() > 0) return criarRespostaSucesso("200", "Review atualizada com sucesso.");
+            else return criarRespostaErro("404", "Review não encontrada.");
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
+    }
+
+    private JsonObject criarFilme(JsonObject req) {
+        JsonObject f = req.getAsJsonObject("filme");
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            String sql = "INSERT INTO filmes(titulo, diretor, ano, genero, sinopse, nota, votos) VALUES(?,?,?,?,?,0.0,0)";
+            PreparedStatement ps = conn.prepareStatement(sql);
+            ps.setString(1, f.get("titulo").getAsString());
+            ps.setString(2, f.get("diretor").getAsString());
+            ps.setString(3, f.get("ano").getAsString());
+            JsonArray ga = f.getAsJsonArray("genero");
+            StringBuilder sb = new StringBuilder();
+            for(int i=0;i<ga.size();i++) { sb.append(ga.get(i).getAsString()); if(i<ga.size()-1) sb.append(","); }
+            ps.setString(4, sb.toString());
+            ps.setString(5, f.has("sinopse")?f.get("sinopse").getAsString():"");
+            ps.executeUpdate();
+            return criarRespostaSucesso("201", "Filme criado com sucesso.");
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
+    }
+
+    private JsonObject excluirFilme(JsonObject req) {
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            PreparedStatement ps = conn.prepareStatement("DELETE FROM filmes WHERE id=?");
+            ps.setString(1, req.get("id").getAsString());
+            return ps.executeUpdate() > 0 ? criarRespostaSucesso("200", "Filme excluído com sucesso.") : criarRespostaErro("404", "Filme não encontrado.");
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
+    }
+
+    private JsonObject login(JsonObject req) {
+        String u = req.get("usuario").getAsString();
+        String s = req.get("senha").getAsString();
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            PreparedStatement ps = conn.prepareStatement("SELECT * FROM usuarios WHERE nome=? AND senha=?");
+            ps.setString(1, u); ps.setString(2, s);
+            ResultSet rs = ps.executeQuery();
+            if(rs.next()) {
+                String token = gerarToken(u, rs.getInt("is_admin") == 1);
+                JsonObject r = criarRespostaSucesso("200", "Login realizado com sucesso.");
+                r.addProperty("token", token);
+                return r;
             }
-            generos = generoBuilder.toString();
+            return criarRespostaErro("401", "Credenciais inválidas.");
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
+    }
 
-        } catch (NumberFormatException e) {
-            throw new ExcecaoValidacao("422", "Erro: ID do filme inválido");
-        } catch (Exception e) {
-            System.err.println("Erro JSON/DB em EDITAR_FILME: " + e.getMessage());
-            throw new ExcecaoValidacao("422", "Erro: Chaves faltantes ou invalidas");
-        }
+    private JsonObject criarUsuario(JsonObject req) {
+        JsonObject u = req.getAsJsonObject("usuario");
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            PreparedStatement check = conn.prepareStatement("SELECT nome FROM usuarios WHERE nome=?");
+            check.setString(1, u.get("nome").getAsString());
+            if(check.executeQuery().next()) return criarRespostaErro("409", "Usuário já existe.");
+            PreparedStatement ps = conn.prepareStatement("INSERT INTO usuarios(nome, senha, is_admin) VALUES(?,?,?)");
+            ps.setString(1, u.get("nome").getAsString());
+            ps.setString(2, u.get("senha").getAsString());
+            ps.setInt(3, 0);
+            ps.executeUpdate();
+            return criarRespostaSucesso("201", "Usuário criado com sucesso.");
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
+    }
 
-        if (titulo.length() < 3 || titulo.length() > 30 ||
-                diretor.length() < 3 || diretor.length() > 30 ||
-                ano.length() < 3 || ano.length() > 4 || !ano.matches("\\d+") ||
-                sinopse.length() > 250 ||
-                generoArray.isEmpty()) {
-            throw new ExcecaoValidacao("405", "Erro: Campos inválidos, verifique o tipo e quantidade de caracteres");
-        }
+    private JsonObject excluirProprioUsuario(String usuario) {
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            PreparedStatement ps = conn.prepareStatement("DELETE FROM usuarios WHERE nome=?");
+            ps.setString(1, usuario);
+            ps.executeUpdate();
+            return criarRespostaSucesso("200", "Conta excluída com sucesso.");
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
+    }
 
-        String sqlCheck = "SELECT id FROM filmes WHERE titulo = ? AND diretor = ? AND ano = ? AND id != ?";
-        String sqlUpdate = "UPDATE filmes SET titulo = ?, diretor = ?, ano = ?, genero = ?, sinopse = ? WHERE id = ?";
+    private String gerarToken(String user, boolean admin) {
+        return Jwts.builder().setSubject(user).claim("admin", admin)
+                .setIssuedAt(new Date()).setExpiration(new Date(System.currentTimeMillis() + 3600000))
+                .signWith(CHAVE_SECRETA).compact();
+    }
 
-        try (Connection conexao = DriverManager.getConnection(urlBancoDados)) {
-            try (PreparedStatement comandoCheck = conexao.prepareStatement(sqlCheck)) {
-                comandoCheck.setString(1, titulo);
-                comandoCheck.setString(2, diretor);
-                comandoCheck.setString(3, ano);
-                comandoCheck.setInt(4, idFilme);
-                try (ResultSet rs = comandoCheck.executeQuery()) {
-                    if (rs.next()) {
-                        return criarRespostaErro("409", "Erro: Recurso ja existe (outro filme com mesmo titulo, diretor e ano)");
-                    } else {
-                        try (PreparedStatement comandoUpdate = conexao.prepareStatement(sqlUpdate)) {
-                            comandoUpdate.setString(1, titulo);
-                            comandoUpdate.setString(2, diretor);
-                            comandoUpdate.setString(3, ano);
-                            comandoUpdate.setString(4, generos);
-                            comandoUpdate.setString(5, sinopse);
-                            comandoUpdate.setInt(6, idFilme);
-
-                            int linhasAfetadas = comandoUpdate.executeUpdate();
-
-                            if (linhasAfetadas > 0) {
-                                return criarRespostaSucesso("200", "Sucesso: operação realizada com sucesso");
-                            } else {
-                                return criarRespostaErro("404", "Erro: Recurso inexistente (ID do filme não encontrado)");
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    private JsonObject criarRespostaSucesso(String s, String m) {
+        JsonObject j = new JsonObject(); j.addProperty("status", s); j.addProperty("mensagem", m); return j;
+    }
+    private JsonObject criarRespostaErro(String s, String m) {
+        JsonObject j = new JsonObject(); j.addProperty("status", s); j.addProperty("mensagem", m); return j;
     }
 }
