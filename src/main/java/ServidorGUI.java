@@ -14,7 +14,8 @@ public class ServidorGUI extends JFrame {
     private JButton btnStart;
     private JButton btnStop;
     private JLabel statusLabel;
-
+    private DefaultListModel<String> listModel;
+    private JList<String> userList;
     private ServerSocket serverSocket;
     private Thread serverThread;
     private boolean isRunning = false;
@@ -22,12 +23,11 @@ public class ServidorGUI extends JFrame {
     public ServidorGUI() {
         super("VoteFlix - Servidor Monitor");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setSize(600, 450);
+        setSize(800, 500);
         setLocationRelativeTo(null);
 
         JPanel mainPanel = new JPanel(new BorderLayout());
 
-        // --- Painel Superior (Configuração) ---
         JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         topPanel.add(new JLabel("Porta:"));
         portField = new JTextField("23000", 6);
@@ -46,24 +46,29 @@ public class ServidorGUI extends JFrame {
 
         mainPanel.add(topPanel, BorderLayout.NORTH);
 
-        // --- Área de Logs Central ---
         logArea = new JTextArea();
         logArea.setEditable(false);
         logArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
         logArea.setBackground(new Color(30, 30, 30));
         logArea.setForeground(Color.GREEN);
 
-        // Auto-scroll para a última linha
         DefaultCaret caret = (DefaultCaret)logArea.getCaret();
         caret.setUpdatePolicy(DefaultCaret.ALWAYS_UPDATE);
 
-        JScrollPane scrollPane = new JScrollPane(logArea);
-        scrollPane.setBorder(BorderFactory.createTitledBorder("Logs do Sistema"));
-        mainPanel.add(scrollPane, BorderLayout.CENTER);
+        JScrollPane scrollLog = new JScrollPane(logArea);
+        scrollLog.setBorder(BorderFactory.createTitledBorder("Logs do Sistema"));
+        mainPanel.add(scrollLog, BorderLayout.CENTER);
 
+        listModel = new DefaultListModel<>();
+        userList = new JList<>(listModel);
+        userList.setBackground(new Color(240, 240, 240));
+
+        JScrollPane scrollList = new JScrollPane(userList);
+        scrollList.setBorder(BorderFactory.createTitledBorder("Usuários Online"));
+        scrollList.setPreferredSize(new Dimension(200, 0));
+        mainPanel.add(scrollList, BorderLayout.EAST);
         add(mainPanel);
 
-        // --- Ações dos Botões ---
         btnStart.addActionListener(e -> iniciarServidor());
         btnStop.addActionListener(e -> pararServidor());
     }
@@ -77,7 +82,6 @@ public class ServidorGUI extends JFrame {
             return;
         }
 
-        // Inicia a thread do servidor para não travar a GUI
         serverThread = new Thread(() -> {
             try {
                 serverSocket = new ServerSocket(porta);
@@ -87,18 +91,14 @@ public class ServidorGUI extends JFrame {
 
                 while (!serverSocket.isClosed()) {
                     Socket clientSocket = serverSocket.accept();
-                    log("Nova conexão recebida: " + clientSocket.getInetAddress());
-
-                    // AQUI NÓS CHAMAMOS SUA CLASSE ANTIGA, MAS PASSANDO O LOG
-                    // Instancia a thread do cliente e inicia
-                    ServidorEcho clienteHandler = new ServidorEcho(clientSocket, this::log);
+                    log("Nova conexão (Socket): " + clientSocket.getInetAddress());
+                    ServidorEcho clienteHandler = new ServidorEcho(clientSocket, this);
                     clienteHandler.start();
                 }
 
             } catch (IOException e) {
-                if (isRunning) { // Se não foi um stop manual
+                if (isRunning) {
                     log("Erro no servidor: " + e.getMessage());
-                    e.printStackTrace();
                 }
             } finally {
                 atualizarStatus(false);
@@ -115,6 +115,7 @@ public class ServidorGUI extends JFrame {
                 serverSocket.close();
             }
             log("Servidor parado manualmente.");
+            SwingUtilities.invokeLater(() -> listModel.clear());
         } catch (IOException e) {
             log("Erro ao fechar servidor: " + e.getMessage());
         }
@@ -128,7 +129,7 @@ public class ServidorGUI extends JFrame {
                 portField.setEnabled(false);
                 btnStop.setEnabled(true);
                 statusLabel.setText(" Status: Rodando");
-                statusLabel.setForeground(new Color(0, 150, 0)); // Verde escuro
+                statusLabel.setForeground(new Color(0, 150, 0));
             } else {
                 btnStart.setEnabled(true);
                 portField.setEnabled(true);
@@ -139,7 +140,6 @@ public class ServidorGUI extends JFrame {
         });
     }
 
-    // Método público para ser chamado por outras classes (thread-safe)
     public void log(String mensagem) {
         SwingUtilities.invokeLater(() -> {
             String time = new SimpleDateFormat("HH:mm:ss").format(new Date());
@@ -147,11 +147,19 @@ public class ServidorGUI extends JFrame {
         });
     }
 
-    // Interface funcional para passar o método de log
-    public interface Logger {
-        void log(String msg);
+    public void adicionarUsuarioNaLista(String nome) {
+        SwingUtilities.invokeLater(() -> {
+            if (!listModel.contains(nome)) {
+                listModel.addElement(nome);
+            }
+        });
     }
 
+    public void removerUsuarioDaLista(String nome) {
+        SwingUtilities.invokeLater(() -> {
+            listModel.removeElement(nome);
+        });
+    }
     public static void main(String[] args) {
         try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); } catch (Exception ignored) {}
         SwingUtilities.invokeLater(() -> new ServidorGUI().setVisible(true));

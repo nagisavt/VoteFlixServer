@@ -101,12 +101,8 @@ public class ClienteGUI extends JFrame {
         JButton btnDetails = new JButton("Detalhes");
         JButton btnAvaliar = new JButton("Avaliar Filme");
         JButton btnMyReviews = new JButton("Minhas Reviews");
-
-        // --- BOTÕES DE EDIÇÃO/EXCLUSÃO DE REVIEW ---
         JButton btnEditReview = new JButton("Editar Review (ID)");
         JButton btnDelReview = new JButton("Excluir Review (ID)");
-        // ------------------------------------------
-
         JButton btnAdminMenu = new JButton("Menu Admin ▼");
         JButton btnLogout = new JButton("Sair");
         JButton btnPerfil = new JButton("Perfil");
@@ -131,8 +127,6 @@ public class ClienteGUI extends JFrame {
         };
         moviesTable = new JTable(tableModel);
         panel.add(new JScrollPane(moviesTable), BorderLayout.CENTER);
-
-        // Ações
         btnRefresh.addActionListener(e -> carregarFilmes());
         btnDetails.addActionListener(e -> verDetalhes());
         btnAvaliar.addActionListener(e -> avaliarFilme());
@@ -151,14 +145,14 @@ public class ClienteGUI extends JFrame {
         JPopupMenu adminMenu = new JPopupMenu();
 
         JMenuItem itemAdd = new JMenuItem("Adicionar Filme");
-        JMenuItem itemEdit = new JMenuItem("Editar Filme (ID)"); // NOVO
+        JMenuItem itemEdit = new JMenuItem("Editar Filme (ID)");
         JMenuItem itemDel = new JMenuItem("Excluir Filme");
         JMenuItem itemListUsers = new JMenuItem("Listar Usuários");
         JMenuItem itemEditUser = new JMenuItem("Editar Usuário (ID)");
         JMenuItem itemDelUser = new JMenuItem("Excluir Usuário (ID)");
 
         itemAdd.addActionListener(e -> addFilme());
-        itemEdit.addActionListener(e -> editarFilmeAdmin()); // Ação nova
+        itemEdit.addActionListener(e -> editarFilmeAdmin());
         itemDel.addActionListener(e -> delFilme());
         itemListUsers.addActionListener(e -> listarUsuariosAdmin());
         itemEditUser.addActionListener(e -> editarUsuarioAdmin());
@@ -175,7 +169,6 @@ public class ClienteGUI extends JFrame {
         adminMenu.show(invoker, 0, invoker.getHeight());
     }
 
-    // --- Lógica de Rede ---
     private void conectar() {
         new SwingWorker<Void, Void>() {
             protected Void doInBackground() throws Exception {
@@ -249,7 +242,6 @@ public class ClienteGUI extends JFrame {
         }.execute();
     }
 
-    // --- Ações ---
     private void login() {
         JsonObject req = new JsonObject(); req.addProperty("operacao", "LOGIN");
         req.addProperty("usuario", userField.getText()); req.addProperty("senha", new String(passField.getPassword()));
@@ -399,7 +391,7 @@ public class ClienteGUI extends JFrame {
         enviar(req, res -> {
             if (res.get("status").getAsString().equals("200")) {
                 JOptionPane.showMessageDialog(this, "Review excluída.");
-                carregarFilmes(); // Para atualizar a nota média!
+                carregarFilmes();
             } else {
                 erro(res);
             }
