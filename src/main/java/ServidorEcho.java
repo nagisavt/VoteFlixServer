@@ -15,12 +15,15 @@ import java.net.Socket;
 import java.sql.*;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ServidorEcho extends Thread {
 
     protected Socket socketCliente;
     private ServidorGUI gui;
     private String usuarioLogadoAtual = null;
+    private static final Map<String, ServidorEcho> clientesConectados = new ConcurrentHashMap<>();
 
     private static final String urlBancoDados = "jdbc:sqlite:votefix.db";
     private static final String CHAVE_SECRETA_STRING = "QK55qT2jmZAkPHABB1acTQmtLyObqb6E";
@@ -37,40 +40,29 @@ public class ServidorEcho extends Thread {
         if (gui != null) gui.log(msg);
     }
 
+    public void desconectarForcado() {
+        try {
+            if (socketCliente != null && !socketCliente.isClosed()) {
+                socketCliente.close();
+            }
+        } catch (IOException e) {
+            log("Erro ao desconectar forçado: " + e.getMessage());
+        }
+    }
+
     private void inicializarBanco() {
         String sqlUsuarios = "CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE, senha TEXT, is_admin INTEGER DEFAULT 0)";
-
-        String sqlFilmes = "CREATE TABLE IF NOT EXISTS filmes (" +
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-                "titulo TEXT, " +
-                "diretor TEXT, " +
-                "ano TEXT, " +
-                "genero TEXT, " +
-                "sinopse TEXT, " +
-                "nota REAL DEFAULT 0.0, " +
-                "votos INTEGER DEFAULT 0)";
-
-        String sqlReviews = "CREATE TABLE IF NOT EXISTS reviews (" +
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-                "id_filme INTEGER, " +
-                "nome_usuario TEXT, " +
-                "titulo TEXT, " +
-                "descricao TEXT, " +
-                "nota INTEGER, " +
-                "data TEXT, " +
-                "editado INTEGER DEFAULT 0, " +
-                "FOREIGN KEY(id_filme) REFERENCES filmes(id))";
+        String sqlFilmes = "CREATE TABLE IF NOT EXISTS filmes (id INTEGER PRIMARY KEY AUTOINCREMENT, titulo TEXT, diretor TEXT, ano TEXT, genero TEXT, sinopse TEXT, nota REAL DEFAULT 0.0, votos INTEGER DEFAULT 0)";
+        String sqlReviews = "CREATE TABLE IF NOT EXISTS reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, id_filme INTEGER, nome_usuario TEXT, titulo TEXT, descricao TEXT, nota INTEGER, data TEXT, editado INTEGER DEFAULT 0, FOREIGN KEY(id_filme) REFERENCES filmes(id))";
 
         try (Connection conn = DriverManager.getConnection(urlBancoDados);
              Statement stmt = conn.createStatement()) {
             stmt.execute(sqlUsuarios);
             stmt.execute(sqlFilmes);
             stmt.execute(sqlReviews);
-
             try {
                 stmt.execute("INSERT INTO usuarios(nome, senha, is_admin) VALUES('admin', 'admin', 1)");
             } catch (SQLException ignored) {}
-
         } catch (SQLException e) {
             System.out.println("Erro DB Init: " + e.getMessage());
         }
@@ -84,9 +76,7 @@ public class ServidorEcho extends Thread {
         ) {
             String inputLine;
             while ((inputLine = in.readLine()) != null) {
-
                 log("RECEBIDO: " + inputLine);
-
                 try {
                     Gson gson = new Gson();
                     JsonObject jsonRequest = gson.fromJson(inputLine, JsonObject.class);
@@ -105,32 +95,25 @@ public class ServidorEcho extends Thread {
                     else if (operacao.equals("BUSCAR_FILME_ID")) resposta = buscarFilmePorId(jsonRequest);
                     else if (operacao.equals("LOGOUT")) {
                         resposta = criarRespostaSucesso("200", "Logout realizado com sucesso.");
-                        if(usuarioLogadoAtual != null && gui != null) {
-                            gui.removerUsuarioDaLista(usuarioLogadoAtual);
-                            usuarioLogadoAtual = null;
-                        }
                     }
                     else resposta = verificarAuthEExecutar(jsonRequest, operacao);
 
                     String jsonResponse = gson.toJson(resposta);
-
                     log("ENVIADO: " + jsonResponse);
                     log("");
-
                     out.println(jsonResponse);
 
                 } catch (Exception e) {
                     e.printStackTrace();
                     JsonObject erro = criarRespostaErro("500", "Erro Interno: " + e.getMessage());
-                    String jsonErro = new Gson().toJson(erro);
-                    log("ENVIADO (ERRO): " + jsonErro);
-                    out.println(jsonErro);
+                    out.println(new Gson().toJson(erro));
                 }
             }
         } catch (IOException e) {
         } finally {
-            if(usuarioLogadoAtual != null && gui != null) {
-                gui.removerUsuarioDaLista(usuarioLogadoAtual);
+            if(usuarioLogadoAtual != null) {
+                if(gui != null) gui.removerUsuarioDaLista(usuarioLogadoAtual);
+                clientesConectados.remove(usuarioLogadoAtual);
                 log("Usuário " + usuarioLogadoAtual + " saiu (Conexão encerrada).");
             }
         }
@@ -150,7 +133,6 @@ public class ServidorEcho extends Thread {
                 case "LISTAR_USUARIOS": return isAdmin ? listarUsuarios() : criarRespostaErro("403", "Apenas administradores.");
                 case "ADMIN_EDITAR_USUARIO": return isAdmin ? adminEditarUsuario(req) : criarRespostaErro("403", "Apenas administradores.");
                 case "ADMIN_EXCLUIR_USUARIO": return isAdmin ? adminExcluirUsuario(req) : criarRespostaErro("403", "Apenas administradores.");
-                case "VERIFICAR_REVIEW_USUARIO": return verificarReviewUsuario(req, usuario);
                 case "CRIAR_REVIEW": return criarReview(req, usuario, isAdmin);
                 case "EDITAR_REVIEW": return editarReview(req, usuario);
                 case "EXCLUIR_REVIEW": return excluirReview(req, usuario, isAdmin);
@@ -158,7 +140,6 @@ public class ServidorEcho extends Thread {
                 case "LISTAR_PROPRIO_USUARIO": return listarProprioUsuario(usuario);
                 case "EXCLUIR_PROPRIO_USUARIO": return excluirProprioUsuario(usuario);
                 case "EDITAR_PROPRIO_USUARIO": return editarProprioUsuario(req, usuario);
-
                 default: return criarRespostaErro("400", "Operação desconhecida.");
             }
         } catch (Exception e) {
@@ -175,8 +156,10 @@ public class ServidorEcho extends Thread {
             ResultSet rs = ps.executeQuery();
             if(rs.next()) {
                 String token = gerarToken(u, rs.getInt("is_admin") == 1);
+
                 usuarioLogadoAtual = u;
                 if(gui != null) gui.adicionarUsuarioNaLista(u);
+                clientesConectados.put(u, this);
 
                 JsonObject r = criarRespostaSucesso("200", "Login realizado com sucesso.");
                 r.addProperty("token", token);
@@ -184,6 +167,51 @@ public class ServidorEcho extends Thread {
             }
             return criarRespostaErro("401", "Credenciais inválidas.");
         } catch (SQLException e) { return criarRespostaErro("500", "Erro no banco de dados."); }
+    }
+
+    private JsonObject adminExcluirUsuario(JsonObject req) {
+        if (!req.has("id")) return criarRespostaErro("422", "ID faltante.");
+        String idAlvo = req.get("id").getAsString();
+
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            String nomeAlvo = null;
+            try (PreparedStatement psBusca = conn.prepareStatement("SELECT nome FROM usuarios WHERE id=?")) {
+                psBusca.setString(1, idAlvo);
+                ResultSet rs = psBusca.executeQuery();
+                if(rs.next()) nomeAlvo = rs.getString("nome");
+            }
+
+            String sql = "DELETE FROM usuarios WHERE id = ?";
+            PreparedStatement pstmt = conn.prepareStatement(sql);
+            pstmt.setString(1, idAlvo);
+            int rows = pstmt.executeUpdate();
+
+            if (rows > 0) {
+                if(nomeAlvo != null && clientesConectados.containsKey(nomeAlvo)) {
+                    ServidorEcho threadDoUsuario = clientesConectados.get(nomeAlvo);
+                    threadDoUsuario.desconectarForcado();
+                    log("Admin expulsou o usuário: " + nomeAlvo);
+                }
+                return criarRespostaSucesso("200", "Operação realizada com sucesso.");
+            } else {
+                return criarRespostaErro("404", "Usuário não encontrado.");
+            }
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro interno."); }
+    }
+
+    private JsonObject excluirProprioUsuario(String usuario) {
+        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
+            PreparedStatement ps = conn.prepareStatement("DELETE FROM usuarios WHERE nome=?");
+            ps.setString(1, usuario);
+            if(ps.executeUpdate() > 0) {
+                new Thread(() -> {
+                    try { Thread.sleep(100); } catch(Exception e){}
+                    desconectarForcado();
+                }).start();
+                return criarRespostaSucesso("200", "Conta excluída com sucesso.");
+            }
+            return criarRespostaErro("404", "Usuário não encontrado.");
+        } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
     }
 
     private JsonObject excluirReview(JsonObject req, String usuario, boolean isAdmin) {
@@ -204,9 +232,7 @@ public class ServidorEcho extends Thread {
                 psBusca.setString(1, idReview);
                 psBusca.setString(2, usuario);
             }
-
             ResultSet rsRev = psBusca.executeQuery();
-
             if (!rsRev.next()) return criarRespostaErro("404", "Review não encontrada ou você não tem permissão.");
 
             int notaRemovida = rsRev.getInt("nota");
@@ -214,7 +240,6 @@ public class ServidorEcho extends Thread {
 
             String sqlDel;
             PreparedStatement psDel;
-
             if (isAdmin) {
                 sqlDel = "DELETE FROM reviews WHERE id=?";
                 psDel = conn.prepareStatement(sqlDel);
@@ -241,7 +266,6 @@ public class ServidorEcho extends Thread {
                 if (novosVotos > 0) {
                     novaMedia = ((mediaAtual * votosAtuais) - notaRemovida) / novosVotos;
                 }
-
                 String sqlUpd = "UPDATE filmes SET nota=?, votos=? WHERE id=?";
                 PreparedStatement psUpd = conn.prepareStatement(sqlUpd);
                 psUpd.setDouble(1, novaMedia);
@@ -249,9 +273,7 @@ public class ServidorEcho extends Thread {
                 psUpd.setInt(3, idFilme);
                 psUpd.executeUpdate();
             }
-
             return criarRespostaSucesso("200", "Review excluída com sucesso.");
-
         } catch (SQLException e) { return criarRespostaErro("500", "Erro interno."); }
     }
 
@@ -266,18 +288,6 @@ public class ServidorEcho extends Thread {
             PreparedStatement pstmt = conn.prepareStatement(sql);
             pstmt.setString(1, novaSenha);
             pstmt.setString(2, idAlvo);
-            if (pstmt.executeUpdate() > 0) return criarRespostaSucesso("200", "Operação realizada com sucesso");
-            else return criarRespostaErro("404", "Usuário não encontrado.");
-        } catch (SQLException e) { return criarRespostaErro("500", "Erro interno."); }
-    }
-
-    private JsonObject adminExcluirUsuario(JsonObject req) {
-        if (!req.has("id")) return criarRespostaErro("422", "ID faltante.");
-        String idAlvo = req.get("id").getAsString();
-        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
-            String sql = "DELETE FROM usuarios WHERE id = ?";
-            PreparedStatement pstmt = conn.prepareStatement(sql);
-            pstmt.setString(1, idAlvo);
             if (pstmt.executeUpdate() > 0) return criarRespostaSucesso("200", "Operação realizada com sucesso");
             else return criarRespostaErro("404", "Usuário não encontrado.");
         } catch (SQLException e) { return criarRespostaErro("500", "Erro interno."); }
@@ -460,37 +470,58 @@ public class ServidorEcho extends Thread {
         } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
     }
 
-    private JsonObject verificarReviewUsuario(JsonObject req, String usuario) {
-        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
-            PreparedStatement ps = conn.prepareStatement("SELECT * FROM reviews WHERE id_filme=? AND nome_usuario=?");
-            ps.setString(1, req.get("id_filme").getAsString());
-            ps.setString(2, usuario);
-            ResultSet rs = ps.executeQuery();
-            if (rs.next()) {
-                JsonObject r = new JsonObject();
-                r.addProperty("id", rs.getInt("id"));
-                r.addProperty("titulo", rs.getString("titulo"));
-                r.addProperty("descricao", rs.getString("descricao"));
-                r.addProperty("nota", rs.getString("nota"));
-                JsonObject resp = criarRespostaSucesso("200", "Review encontrada.");
-                resp.add("review", r);
-                return resp;
-            } else return criarRespostaErro("404", "Nenhuma review encontrada.");
-        } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
-    }
-
     private JsonObject editarReview(JsonObject req, String usuario) {
         JsonObject rev = req.getAsJsonObject("review");
+        if (!rev.has("id") || !rev.has("titulo") || !rev.has("descricao") || !rev.has("nota")) {
+            return criarRespostaErro("422", "Campos obrigatórios faltando.");
+        }
+        int novaNotaInput;
+        try {
+            novaNotaInput = Integer.parseInt(rev.get("nota").getAsString());
+            if (novaNotaInput < 1 || novaNotaInput > 5) return criarRespostaErro("405", "Nota deve ser entre 1 e 5.");
+        } catch (Exception e) { return criarRespostaErro("405", "Nota inválida."); }
+
+        String idReview = rev.get("id").getAsString();
+
         try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
-            String sql = "UPDATE reviews SET titulo=?, descricao=?, nota=?, editado=1 WHERE id_filme=? AND nome_usuario=?";
-            PreparedStatement ps = conn.prepareStatement(sql);
-            ps.setString(1, rev.get("titulo").getAsString());
-            ps.setString(2, rev.get("descricao").getAsString());
-            ps.setString(3, rev.get("nota").getAsString());
-            ps.setString(4, rev.get("id_filme").getAsString());
-            ps.setString(5, usuario);
-            if(ps.executeUpdate() > 0) return criarRespostaSucesso("200", "Review atualizada com sucesso.");
-            else return criarRespostaErro("404", "Review não encontrada.");
+            String sqlBusca = "SELECT nota, id_filme FROM reviews WHERE id=? AND nome_usuario=?";
+            PreparedStatement psBusca = conn.prepareStatement(sqlBusca);
+            psBusca.setString(1, idReview);
+            psBusca.setString(2, usuario);
+            ResultSet rsRev = psBusca.executeQuery();
+            if (!rsRev.next()) return criarRespostaErro("404", "Review não encontrada.");
+
+            int notaAntiga = rsRev.getInt("nota");
+            int idFilme = rsRev.getInt("id_filme");
+
+            String sqlUpdRev = "UPDATE reviews SET titulo=?, descricao=?, nota=?, editado=1 WHERE id=?";
+            PreparedStatement psUpdRev = conn.prepareStatement(sqlUpdRev);
+            psUpdRev.setString(1, rev.get("titulo").getAsString());
+            psUpdRev.setString(2, rev.get("descricao").getAsString());
+            psUpdRev.setInt(3, novaNotaInput);
+            psUpdRev.setString(4, idReview);
+            psUpdRev.executeUpdate();
+
+            if (notaAntiga != novaNotaInput) {
+                String sqlFilme = "SELECT nota, votos FROM filmes WHERE id=?";
+                PreparedStatement psFilme = conn.prepareStatement(sqlFilme);
+                psFilme.setInt(1, idFilme);
+                ResultSet rsFilme = psFilme.executeQuery();
+                if (rsFilme.next()) {
+                    double mediaAtual = rsFilme.getDouble("nota");
+                    int votosAtuais = rsFilme.getInt("votos");
+                    if (votosAtuais > 0) {
+                        double novoTotal = (mediaAtual * votosAtuais) - notaAntiga + novaNotaInput;
+                        double novaMedia = novoTotal / votosAtuais;
+                        String sqlUpdFilme = "UPDATE filmes SET nota=? WHERE id=?";
+                        PreparedStatement psUpdFilme = conn.prepareStatement(sqlUpdFilme);
+                        psUpdFilme.setDouble(1, novaMedia);
+                        psUpdFilme.setInt(2, idFilme);
+                        psUpdFilme.executeUpdate();
+                    }
+                }
+            }
+            return criarRespostaSucesso("200", "Review atualizada com sucesso.");
         } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
     }
 
@@ -551,15 +582,6 @@ public class ServidorEcho extends Thread {
             ps.setInt(3, 0);
             ps.executeUpdate();
             return criarRespostaSucesso("201", "Usuário criado com sucesso.");
-        } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
-    }
-
-    private JsonObject excluirProprioUsuario(String usuario) {
-        try (Connection conn = DriverManager.getConnection(urlBancoDados)) {
-            PreparedStatement ps = conn.prepareStatement("DELETE FROM usuarios WHERE nome=?");
-            ps.setString(1, usuario);
-            ps.executeUpdate();
-            return criarRespostaSucesso("200", "Conta excluída com sucesso.");
         } catch (SQLException e) { return criarRespostaErro("500", "Erro BD."); }
     }
 

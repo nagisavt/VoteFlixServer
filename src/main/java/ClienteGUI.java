@@ -300,18 +300,32 @@ public class ClienteGUI extends JFrame {
                 StringBuilder sb = new StringBuilder();
                 sb.append("TÍTULO: ").append(f.get("titulo").getAsString()).append("\n");
                 sb.append("SINOPSE: ").append(f.get("sinopse").getAsString()).append("\n\n");
-                sb.append("--- REVIEWS ---\n");
+
+                sb.append("=== REVIEWS ===\n");
                 JsonArray reviews = res.getAsJsonArray("reviews");
                 if (reviews.size() == 0) sb.append("(Nenhuma avaliação ainda)\n");
 
                 for(var r : reviews) {
                     JsonObject rev = r.getAsJsonObject();
-                    sb.append("ID: ").append(rev.get("id").getAsString()).append(" - ");
-                    sb.append("[").append(rev.get("nota").getAsString()).append("] ");
-                    sb.append(rev.get("nome_usuario").getAsString()).append(": ");
-                    sb.append(rev.get("titulo").getAsString()).append("\n");
-                    sb.append("   \"").append(rev.get("descricao").getAsString()).append("\"\n\n");
+                    sb.append("--------------------------------------------------\n");
+                    sb.append("REVIEW ID: ").append(rev.get("id").getAsString()).append("\n");
+                    sb.append("Título: ").append(rev.get("titulo").getAsString());
+                    sb.append(" (por ").append(rev.get("nome_usuario").getAsString()).append(")\n");
+                    sb.append("Nota: ").append(rev.get("nota").getAsString()).append("/5");
+
+                    if (rev.has("data")) {
+                        sb.append("  |  Data: ").append(rev.get("data").getAsString());
+                    }
+
+                    if (rev.has("editado") && rev.get("editado").getAsString().equals("true")) {
+                        sb.append(" (Editado)");
+                    }
+                    sb.append("\n\n");
+                    sb.append("Resenha:\n\"");
+                    sb.append(rev.get("descricao").getAsString());
+                    sb.append("\"\n");
                 }
+
                 JTextArea ta = new JTextArea(sb.toString(), 20, 50);
                 ta.setEditable(false);
                 ta.setLineWrap(true);
@@ -401,7 +415,6 @@ public class ClienteGUI extends JFrame {
     private void editarMinhaReview() {
         String id = JOptionPane.showInputDialog(this, "ID da review a editar:");
         if(id == null || id.trim().isEmpty()) return;
-        String idFilme = JOptionPane.showInputDialog(this, "ID do filme dessa review:");
 
         JTextField tit = new JTextField();
         JTextArea desc = new JTextArea(3,20);
@@ -411,7 +424,9 @@ public class ClienteGUI extends JFrame {
 
         if(JOptionPane.showConfirmDialog(this, msg, "Editar Review", JOptionPane.OK_CANCEL_OPTION) == JOptionPane.OK_OPTION) {
             JsonObject rev = new JsonObject();
-            rev.addProperty("id_filme", idFilme);
+
+            rev.addProperty("id", id);
+
             rev.addProperty("titulo", tit.getText());
             rev.addProperty("descricao", desc.getText());
             rev.addProperty("nota", (String)nota.getSelectedItem());
@@ -422,8 +437,10 @@ public class ClienteGUI extends JFrame {
 
             enviar(req, res -> {
                 if(res.get("status").getAsString().equals("200")) {
-                    JOptionPane.showMessageDialog(this, "Review editada!");
-                } else erro(res);
+                    JOptionPane.showMessageDialog(this, "Review editada com sucesso!");
+                } else {
+                    erro(res);
+                }
             });
         }
     }
